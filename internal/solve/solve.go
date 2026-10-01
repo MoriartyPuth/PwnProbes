@@ -59,15 +59,18 @@ type solver struct {
 	path    string
 	workDir string
 	timeout time.Duration
+	remote  string // host:port for a remote target; empty means a local subprocess
 	report  *Report
 }
 
-// Solve detects vulnerabilities and runs each applicable strategy in turn,
-// stopping at the first payload that recovers a non-echoed flag and reporting
-// that payload as the reproducible winner. pattern selects the flag shape; an
-// empty pattern uses extract.DefaultPattern. The target runs in its own
-// directory so a flag file beside it is readable.
-func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Report, error) {
+// Solve runs each applicable strategy in turn, stopping at the first payload that
+// recovers a non-echoed flag and reporting it as the reproducible winner. pattern
+// selects the flag shape; an empty pattern uses extract.DefaultPattern. path is a
+// local copy of the binary, used for static analysis in all modes. When remote is
+// set (host:port) the exploit runs over a live TCP session; otherwise the target
+// runs as a local subprocess in its own directory so a flag file beside it is
+// readable.
+func Solve(ctx context.Context, path, pattern, remote string, timeout time.Duration) (Report, error) {
 	ex, err := extract.New(pattern)
 	if err != nil {
 		return Report{}, fmt.Errorf("compile flag pattern: %w", err)
@@ -76,26 +79,45 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 	if effectivePattern == "" {
 		effectivePattern = extract.DefaultPattern
 	}
-	detection, err := detect.Probe(ctx, path, timeout)
+	binary, err := inspect.Analyze(path)
 	if err != nil {
 		return Report{}, err
 	}
 	report := Report{
-		Binary:    detection.Binary,
-		Detection: detection,
-		Pattern:   effectivePattern,
-		Attempts:  []Attempt{},
-		Flags:     []string{},
+		Binary:   binary,
+		Pattern:  effectivePattern,
+		Attempts: []Attempt{},
+		Flags:    []string{},
 		Limitations: []string{
 			"strategies implemented: format-string read, stack-overflow variable/return overwrite, two-argument ret2win ROP, executable-stack shellcode, and ret2libc",
-			"leaked-address strategies run the target under setarch -R (ASLR off) to reuse a leaked address across runs; suitable for local labs, not hardened or remote targets",
-			"the overwrite strategy brute-forces padding against magic constants and function addresses found in the binary; it suits simple fixed-address (no-PIE) targets",
+			"leaked-address strategies run over a live session (local subprocess or remote TCP), so they work with ASLR enabled",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
-			"single stdin interaction ending in EOF; menu-driven and remote targets are unsupported",
 			"failure to recover a flag does not prove the target is unexploitable",
 		},
 	}
-	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, report: &report}
+	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, report: &report}
+
+	// Session strategies (live leak) work both locally and remotely.
+	sessionStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy}
+
+	if remote != "" {
+		report.Limitations = append(report.Limitations, "remote mode currently supports the live-leak strategies (shellcode, ret2libc); it assumes the local binary copy matches the remote, and ret2libc assumes a matching libc")
+		for _, strat := range sessionStrategies {
+			if done, err := strat(ctx); err != nil {
+				return report, err
+			} else if done {
+				return report, nil
+			}
+		}
+		return report, nil
+	}
+
+	// Local mode: run the one-shot detection and strategies, then the session ones.
+	detection, err := detect.Probe(ctx, path, timeout)
+	if err != nil {
+		return report, err
+	}
+	report.Detection = detection
 
 	if hasFormatString(detection) {
 		if done, err := s.formatStringStrategy(ctx); err != nil {
@@ -107,31 +129,18 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 		report.Limitations = append(report.Limitations, "no confirmed format-string behavior; format-string strategy skipped")
 	}
 
-	if detection.Binary.ExecutionSupported {
-		if done, err := s.stackOverwriteStrategy(ctx); err != nil {
-			return report, err
-		} else if done {
-			return report, nil
-		}
-		if done, err := s.ropRet2winArgsStrategy(ctx); err != nil {
-			return report, err
-		} else if done {
-			return report, nil
-		}
-		if done, err := s.shellcodeStrategy(ctx); err != nil {
-			return report, err
-		} else if done {
-			return report, nil
-		}
-		if done, err := s.ret2libcStrategy(ctx); err != nil {
-			return report, err
-		} else if done {
-			return report, nil
-		}
-	} else {
-		report.Limitations = append(report.Limitations, "execution unsupported for this target; overwrite and ROP strategies skipped")
+	if !binary.ExecutionSupported {
+		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
+		return report, nil
 	}
-
+	localStrategies := append([]func(context.Context) (bool, error){s.stackOverwriteStrategy, s.ropRet2winArgsStrategy}, sessionStrategies...)
+	for _, strat := range localStrategies {
+		if done, err := strat(ctx); err != nil {
+			return report, err
+		} else if done {
+			return report, nil
+		}
+	}
 	return report, nil
 }
 

@@ -28,6 +28,7 @@ pwnprobe inspect --json ./target
 pwnprobe run --timeout 1s --input ./input.txt --json ./target
 pwnprobe detect --timeout 1s --json ./target
 pwnprobe solve --timeout 2s --flag-pattern 'flag\{[^}]+\}' --json ./target
+pwnprobe solve --remote host:1337 --flag-pattern 'flag\{[^}]+\}' ./local_copy
 pwnprobe version
 ```
 
@@ -40,7 +41,13 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 - **format_string** (when format-string behavior is confirmed): sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads). Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered.
 - **stack_overwrite** (when the target is an executable PwnProbe can run): brute-forces a line-based overflow, appending each magic constant decoded from the binary's instructions and each function address (on fixed-address, non-PIE binaries) after increasing padding lengths. A flag that then appears in the output recovers both the correct offset and the required value — for example a guard variable that must equal a magic constant, or a redirect to a flag-printing function — without those being hardcoded. For ret2win targets that call into libc, a stack-aligning `ret` gadget is tried to clear the common `movaps` fault.
 - **rop_ret2win_args** (when `pop rdi; ret` and `pop rsi; ret` gadgets are present on a fixed-address binary): solves a win function that requires two register arguments equal to specific constants. It first locates the offset and function with sentinel arguments the target echoes, then builds a ROP chain setting RDI and RSI from the binary's decoded constants and calling the function.
-- **shellcode** (executable-stack binary that leaks its buffer address): writes shellcode at the buffer, pads to the return address, and overwrites it with the leaked buffer address. **ret2libc** (NX binary that leaks a libc address and has a `pop rdi; ret` gadget): resolves the libc base from the leak, finds `system()` and a `"/bin/sh"` string, and builds a `pop rdi; "/bin/sh"; system()` chain. Both run the target under `setarch -R` so a leaked address stays valid across the baseline and exploit runs, then drive the spawned shell with `cat flag.txt`. This is for local teaching labs, not hardened or remote targets.
+- **shellcode** (executable-stack binary that leaks its buffer address): writes shellcode at the buffer, pads to the return address, and overwrites it with the leaked buffer address. **ret2libc** (NX binary that leaks a libc address and has a `pop rdi; ret` gadget): resolves the libc base from the leak, finds `system()` and a `"/bin/sh"` string, and builds a `pop rdi; "/bin/sh"; system()` chain. Both read the leak and send the exploit within one live connection, so they work with ASLR enabled, then drive the spawned shell with `cat flag.txt`.
+
+## Remote and interactive sessions
+
+`internal/session` provides one interactive transport for a local subprocess and a remote TCP service: send, `RecvUntil(delim)`, and a prompt-agnostic `RecvUntilIdle` that collects output up to a blocking read. The leaked-address strategies run over it, reading a leak and replying in the same connection — the capability one-shot execution cannot offer, and what lets them handle ASLR and remote targets.
+
+`pwnprobe solve --remote host:port ./local_copy` analyzes the local binary copy (protections, gadgets, libc) and exploits the remote service over TCP. Remote mode currently runs the live-leak strategies (shellcode, ret2libc); it assumes the local copy matches the remote binary, and ret2libc assumes a matching libc. The overwrite, ROP, and format-string strategies remain local-only for now.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
