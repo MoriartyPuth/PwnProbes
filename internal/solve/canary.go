@@ -28,21 +28,18 @@ func isCRTName(n string) bool {
 	return false
 }
 
-// ret2winTails builds return-address tails for every user function, ordered so
-// that functions whose name suggests a "win" (win, flag, shell, ...) are tried
-// first, with a stack-aligning ret variant for each. CRT and compiler stubs are
-// dropped. This makes a ret2win land in a handful of attempts rather than a
-// full sweep over every symbol.
-func ret2winTails(bin inspect.Report, ret uint64, haveRet bool) []tail {
-	width := 8
-	if bin.Bits == 32 {
-		width = 4
-	}
-	type fn struct {
-		name string
-		addr uint64
-	}
-	var fns []fn
+type funcEntry struct {
+	name string
+	addr uint64
+}
+
+// orderedWinFunctions returns the target's defined functions with CRT and
+// compiler stubs dropped, ordered so that functions whose name suggests a "win"
+// (win, flag, shell, ...) come first, then by address. This makes a ret2win or a
+// GOT redirect land in a handful of attempts rather than a sweep over every
+// symbol.
+func orderedWinFunctions(bin inspect.Report) []funcEntry {
+	var fns []funcEntry
 	seen := map[uint64]bool{}
 	for _, sym := range bin.Functions {
 		var a uint64
@@ -50,7 +47,7 @@ func ret2winTails(bin inspect.Report, ret uint64, haveRet bool) []tail {
 			continue
 		}
 		seen[a] = true
-		fns = append(fns, fn{sym.Name, a})
+		fns = append(fns, funcEntry{sym.Name, a})
 	}
 	sort.SliceStable(fns, func(i, j int) bool {
 		wi, wj := winNameRe.MatchString(fns[i].name), winNameRe.MatchString(fns[j].name)
@@ -59,8 +56,18 @@ func ret2winTails(bin inspect.Report, ret uint64, haveRet bool) []tail {
 		}
 		return fns[i].addr < fns[j].addr
 	})
+	return fns
+}
+
+// ret2winTails builds return-address tails from the ordered win functions, with
+// a stack-aligning ret variant for each.
+func ret2winTails(bin inspect.Report, ret uint64, haveRet bool) []tail {
+	width := 8
+	if bin.Bits == 32 {
+		width = 4
+	}
 	var tails []tail
-	for _, f := range fns {
+	for _, f := range orderedWinFunctions(bin) {
 		b := addrBytes(f.addr, width)
 		tails = append(tails, tail{bytes: b, note: fmt.Sprintf("win=0x%x(%s)", f.addr, f.name)})
 		if haveRet && width == 8 {
