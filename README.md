@@ -1,6 +1,6 @@
 # PwnProbe
 
-PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads, stack-overflow variable/return overwrites, and two-argument ret2win ROP). Remote sessions and further strategies are planned.
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads, stack-overflow variable/return overwrites, two-argument ret2win ROP, executable-stack shellcode, and ret2libc). Remote sessions and further strategies are planned.
 
 ## Build
 
@@ -40,6 +40,7 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 - **format_string** (when format-string behavior is confirmed): sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads). Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered.
 - **stack_overwrite** (when the target is an executable PwnProbe can run): brute-forces a line-based overflow, appending each magic constant decoded from the binary's instructions and each function address (on fixed-address, non-PIE binaries) after increasing padding lengths. A flag that then appears in the output recovers both the correct offset and the required value — for example a guard variable that must equal a magic constant, or a redirect to a flag-printing function — without those being hardcoded. For ret2win targets that call into libc, a stack-aligning `ret` gadget is tried to clear the common `movaps` fault.
 - **rop_ret2win_args** (when `pop rdi; ret` and `pop rsi; ret` gadgets are present on a fixed-address binary): solves a win function that requires two register arguments equal to specific constants. It first locates the offset and function with sentinel arguments the target echoes, then builds a ROP chain setting RDI and RSI from the binary's decoded constants and calling the function.
+- **shellcode** (executable-stack binary that leaks its buffer address): writes shellcode at the buffer, pads to the return address, and overwrites it with the leaked buffer address. **ret2libc** (NX binary that leaks a libc address and has a `pop rdi; ret` gadget): resolves the libc base from the leak, finds `system()` and a `"/bin/sh"` string, and builds a `pop rdi; "/bin/sh"; system()` chain. Both run the target under `setarch -R` so a leaked address stays valid across the baseline and exploit runs, then drive the spawned shell with `cat flag.txt`. This is for local teaching labs, not hardened or remote targets.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 

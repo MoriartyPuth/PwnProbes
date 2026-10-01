@@ -87,7 +87,8 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 		Attempts:  []Attempt{},
 		Flags:     []string{},
 		Limitations: []string{
-			"strategies implemented: format-string read, stack-overflow variable/return overwrite, and two-argument ret2win ROP",
+			"strategies implemented: format-string read, stack-overflow variable/return overwrite, two-argument ret2win ROP, executable-stack shellcode, and ret2libc",
+			"leaked-address strategies run the target under setarch -R (ASLR off) to reuse a leaked address across runs; suitable for local labs, not hardened or remote targets",
 			"the overwrite strategy brute-forces padding against magic constants and function addresses found in the binary; it suits simple fixed-address (no-PIE) targets",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
 			"single stdin interaction ending in EOF; menu-driven and remote targets are unsupported",
@@ -113,6 +114,16 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 			return report, nil
 		}
 		if done, err := s.ropRet2winArgsStrategy(ctx); err != nil {
+			return report, err
+		} else if done {
+			return report, nil
+		}
+		if done, err := s.shellcodeStrategy(ctx); err != nil {
+			return report, err
+		} else if done {
+			return report, nil
+		}
+		if done, err := s.ret2libcStrategy(ctx); err != nil {
 			return report, err
 		} else if done {
 			return report, nil
