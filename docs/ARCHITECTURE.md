@@ -70,20 +70,21 @@ use the planner or an external engine.
 
 ## The four hard classes
 
-### 1. Full-RELRO GOT — easy/medium (next up)
+### 1. Full-RELRO GOT — DONE (`fmt_write_ret`)
 
 Full RELRO only makes the GOT read-only; the **stack and libc stay writable**, so
 the write primitive is retargeted rather than the mitigation defeated.
 
-- Generalise the format-string write into `fmt_write_anywhere` with pluggable
-  targets, tried by what is writable:
-  1. GOT entry (partial RELRO) — already implemented.
-  2. **Saved return address on the stack** (any RELRO) — leak a stack pointer via
-     the same `%p` dump, locate the vulnerable frame's saved RIP, and write a win
-     address there. The canary is irrelevant (the write does not touch it).
-  3. libc hook (`__free_hook`/`__malloc_hook`, glibc < 2.34) — needs a libc leak
-     and a reachable `free`/`malloc` with a controllable argument.
-- Effort: small–medium, builds directly on `fmt_got.go`. Payoff: high.
+- GOT entry overwrite (partial RELRO) — `fmt_got.go`.
+- **Saved return address on the stack** (any RELRO) — `fmt_writeret.go`: for a
+  looping format string, leak the stack and write a win address onto a saved
+  return address, then exit the loop so the frame returns into win. The leak and
+  the write share one connection so the leaked addresses stay valid; the canary
+  is untouched. Implemented and validated against a full-RELRO looping lab.
+- Still open: a single-shot full-RELRO target has no reachable fixed writable
+  function pointer, so it needs a program-specific hook; and libc hooks
+  (`__free_hook`/`__malloc_hook`, glibc < 2.34) need a libc leak plus a reachable
+  `free`/`malloc` with a controllable argument.
 
 ### 2. PIE without a leak — medium, narrow
 
@@ -128,8 +129,8 @@ subset coverage; best treated as a long-term track.
 
 ## Recommended order
 
-1. Full-RELRO via `fmt_write_anywhere` (saved-RIP / hooks) — cheap, high payoff.
-2. `partialOverwrite` for PIE-without-leak — classic, bounded.
+1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
+2. `partialOverwrite` for PIE-without-leak — classic, bounded. **Next.**
 3. angr strategy for logic/argv/fd — medium effort, whole new category.
 4. Heap — long-term research track, scoped to tcache first.
 
