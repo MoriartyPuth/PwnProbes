@@ -1,0 +1,9 @@
+/bin/
+*_test.go
+/fixtures/
+/examples/
+/scripts/original_detection.py
+*results.json
+*.test
+*.exe
+*.out

@@ -1,1 +1,70 @@
-# PwnProbes
+# PwnProbe
+
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. Version 0.1.0 provides static inspection, bounded execution, and format-string behavior probes. Automatic exploitation and remote sessions are planned.
+
+## Build
+
+Requires Go 1.23 or later. The Go code has no third-party module dependencies.
+
+```sh
+go build -o bin/pwnprobe ./cmd/pwnprobe
+```
+
+On Windows, build the native inspector or cross-compile a Linux executable for WSL:
+
+```powershell
+go build -o bin/pwnprobe.exe ./cmd/pwnprobe
+$env:GOOS = 'linux'
+$env:GOARCH = 'amd64'
+go build -o bin/pwnprobe-linux-amd64 ./cmd/pwnprobe
+Remove-Item Env:GOOS
+Remove-Item Env:GOARCH
+```
+
+## Usage
+
+```sh
+pwnprobe inspect --json ./target
+pwnprobe run --timeout 1s --input ./input.txt --json ./target
+pwnprobe detect --timeout 1s --json ./target
+pwnprobe version
+```
+
+Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path. `run` sends EOF when no input file is specified. `run` exits nonzero if the target crashes, times out, or exits unsuccessfully; its JSON still records the outcome.
+
+Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
+
+## What it reports
+
+- ELF architecture, entry point, imports, functions, libraries, and SHA-256 fingerprint.
+- Evidence for NX, PIE, RELRO, RWX segments, symbol stripping, and stack-check symbols.
+- Input-dependent format expansion confirmed using unique markers and a literal baseline.
+- Process exit status, crash signal, deadline outcome, input/output transcripts, and truncated-output indicators.
+
+Missing canary evidence is reported as unknown. Stack-check symbol presence does not establish protection of every function. A crash is an observation, not proof of an overflow or control of execution. A successful process exit does not establish exploitation success.
+
+## Execution limits
+
+The runner uses disposable working directories, a sanitized environment, process-group cleanup, a per-run deadline, a 1 MiB input limit, and a 1 MiB capture limit per output stream. Maximum per-run timeout is one minute.
+
+The runner is not a security sandbox. It does not restrict filesystem/network access, memory, CPU, or process count. Use trusted lab programs or run the entire tool in a restricted VM/container. Descendants that escape their process group are outside its cleanup guarantees. Static ELF size guards are not a security boundary for hostile parser inputs.
+
+Probes handle one stdin interaction ending in EOF. Interactive menus, remote transports, gadget analysis, and exploitation strategies are not implemented yet. Files can change between inspection and execution.
+
+## Benchmark engine
+
+The production benchmark engine accepts a caller-provided JSON manifest and requires Linux and GCC:
+
+```sh
+pwnprobe benchmark --manifest /path/to/manifest.json --json
+```
+
+Each manifest entry contains `name`, `source` (relative to the manifest), `flags`, expected `protections` statuses, and the boolean expectations `format_string`, `crash`, and `timeout`. Optional comparison with the original detector requires `original_baseline: true`, `--original /path/to/pwnpasi.py`, and a caller-provided `--baseline-script /path/to/adapter.py`.
+
+Test code, fixtures, adapters, reports, and compiled binaries are excluded from this repository. The initial local validation passed six controlled fixture cases and the runner/metadata/CLI checks. An easy local format-string challenge was detected and a manually supplied flag-read input succeeded ten times; the patched control did not disclose the flag. These results are not a general exploit-success benchmark.
+
+## Roadmap
+
+Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; strategy interfaces with explicit prerequisites; outcome verification and reproducible reports.
+
+The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.
