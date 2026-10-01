@@ -1,6 +1,6 @@
 # PwnProbe
 
-PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. Version 0.1.0 provides static inspection, bounded execution, and format-string behavior probes. Automatic exploitation and remote sessions are planned.
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local format-string challenges. Remote sessions and further strategies are planned.
 
 ## Build
 
@@ -27,10 +27,15 @@ Remove-Item Env:GOARCH
 pwnprobe inspect --json ./target
 pwnprobe run --timeout 1s --input ./input.txt --json ./target
 pwnprobe detect --timeout 1s --json ./target
+pwnprobe solve --timeout 2s --flag-pattern 'flag\{[^}]+\}' --json ./target
 pwnprobe version
 ```
 
 Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path. `run` sends EOF when no input file is specified. `run` exits nonzero if the target crashes, times out, or exits unsuccessfully; its JSON still records the outcome.
+
+`run` and `solve` accept `--flag-pattern`, a regexp for the flag shape; an empty value uses a broad default (`name{...}`). `run` reports `recovered_flags`: pattern matches present in the output but not in the supplied input. A match that is a substring of the input is treated as echoed and never counted — a program reflecting caller-supplied bytes is not evidence that a secret was discovered.
+
+`solve` runs `detect` first and, only when format-string behavior is confirmed, sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads) and extracts the disclosed flag. Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered. It stops at the first payload that yields a non-echoed flag and reports that exact payload as a reproducible winner. `solve` exits nonzero when no flag is recovered; a crash is never reported as a solve.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
@@ -40,6 +45,8 @@ Inspection works on Windows and Linux. Execution and detection require Linux; us
 - Evidence for NX, PIE, RELRO, RWX segments, symbol stripping, and stack-check symbols.
 - Input-dependent format expansion confirmed using unique markers and a literal baseline.
 - Process exit status, crash signal, deadline outcome, input/output transcripts, and truncated-output indicators.
+- Flags disclosed in output that were not present in the supplied input, with echoed input excluded.
+- For a confirmed format-string target, an automatic solve attempt with the recovered flag and the reproducible payload that produced it.
 
 Missing canary evidence is reported as unknown. Stack-check symbol presence does not establish protection of every function. A crash is an observation, not proof of an overflow or control of execution. A successful process exit does not establish exploitation success.
 
@@ -65,6 +72,6 @@ Test code, fixtures, adapters, reports, and compiled binaries are excluded from 
 
 ## Roadmap
 
-Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; strategy interfaces with explicit prerequisites; outcome verification and reproducible reports.
+Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; additional solve strategies (overflow-driven ret2win, menu-driven protocols) behind explicit prerequisites; outcome verification across strategies.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.
