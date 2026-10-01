@@ -21,6 +21,11 @@ type Request struct {
 	Args    []string
 	Input   []byte
 	Timeout time.Duration
+	// WorkDir, when set, runs the target in this directory instead of a
+	// disposable one, so resources beside the binary (such as a flag file) are
+	// readable. This trades the disposable-directory isolation for the behavior
+	// a local solver needs; HOME and TMPDIR still point at a scratch directory.
+	WorkDir string
 }
 type Result struct {
 	Outcome         string `json:"outcome"`
@@ -86,6 +91,9 @@ func Run(ctx context.Context, req Request) (Result, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, program, req.Args...)
 	cmd.Dir = dir
+	if req.WorkDir != "" {
+		cmd.Dir = req.WorkDir
+	}
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + dir, "TMPDIR=" + dir}
 	cmd.Stdin = bytes.NewReader(req.Input)
 	out, errs := &bounded{}, &bounded{}

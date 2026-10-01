@@ -1,6 +1,6 @@
 # PwnProbe
 
-PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local format-string challenges. Remote sessions and further strategies are planned.
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads and stack-overflow variable/return overwrites). Remote sessions and further strategies are planned.
 
 ## Build
 
@@ -35,7 +35,10 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 
 `run` and `solve` accept `--flag-pattern`, a regexp for the flag shape; an empty value uses a broad default (`name{...}`). `run` reports `recovered_flags`: pattern matches present in the output but not in the supplied input. A match that is a substring of the input is treated as echoed and never counted — a program reflecting caller-supplied bytes is not evidence that a secret was discovered.
 
-`solve` runs `detect` first and, only when format-string behavior is confirmed, sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads) and extracts the disclosed flag. Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered. It stops at the first payload that yields a non-echoed flag and reports that exact payload as a reproducible winner. `solve` exits nonzero when no flag is recovered; a crash is never reported as a solve.
+`solve` runs `detect` first, then tries each applicable strategy and stops at the first payload that yields a non-echoed flag, reporting that exact payload as a reproducible winner. It exits nonzero when no flag is recovered; a crash is never reported as a solve. The target runs in its own directory so a flag file beside it is readable.
+
+- **format_string** (when format-string behavior is confirmed): sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads). Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered.
+- **stack_overwrite** (when the target is an executable PwnProbe can run): brute-forces a line-based overflow, appending each magic constant scanned from the binary's code and each function address (on fixed-address, non-PIE binaries) after increasing padding lengths. A flag that then appears in the output recovers both the correct offset and the required value — for example a guard variable that must equal a magic constant, or a redirect to a flag-printing function — without those being hardcoded.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
@@ -46,7 +49,7 @@ Inspection works on Windows and Linux. Execution and detection require Linux; us
 - Input-dependent format expansion confirmed using unique markers and a literal baseline.
 - Process exit status, crash signal, deadline outcome, input/output transcripts, and truncated-output indicators.
 - Flags disclosed in output that were not present in the supplied input, with echoed input excluded.
-- For a confirmed format-string target, an automatic solve attempt with the recovered flag and the reproducible payload that produced it.
+- For a format-string or stack-overflow target, an automatic solve attempt with the recovered flag and the reproducible payload that produced it.
 
 Missing canary evidence is reported as unknown. Stack-check symbol presence does not establish protection of every function. A crash is an observation, not proof of an overflow or control of execution. A successful process exit does not establish exploitation success.
 
@@ -72,6 +75,6 @@ Test code, fixtures, adapters, reports, and compiled binaries are excluded from 
 
 ## Roadmap
 
-Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; additional solve strategies (overflow-driven ret2win, menu-driven protocols) behind explicit prerequisites; outcome verification across strategies.
+Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; further solve strategies (menu-driven protocols, PIE targets via a leak, ROP) behind explicit prerequisites; outcome verification across strategies.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.
