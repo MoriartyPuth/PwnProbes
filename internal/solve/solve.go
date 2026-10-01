@@ -87,7 +87,7 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 		Attempts:  []Attempt{},
 		Flags:     []string{},
 		Limitations: []string{
-			"strategies implemented: format-string read and stack-overflow variable/return overwrite",
+			"strategies implemented: format-string read, stack-overflow variable/return overwrite, and two-argument ret2win ROP",
 			"the overwrite strategy brute-forces padding against magic constants and function addresses found in the binary; it suits simple fixed-address (no-PIE) targets",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
 			"single stdin interaction ending in EOF; menu-driven and remote targets are unsupported",
@@ -112,8 +112,13 @@ func Solve(ctx context.Context, path, pattern string, timeout time.Duration) (Re
 		} else if done {
 			return report, nil
 		}
+		if done, err := s.ropRet2winArgsStrategy(ctx); err != nil {
+			return report, err
+		} else if done {
+			return report, nil
+		}
 	} else {
-		report.Limitations = append(report.Limitations, "execution unsupported for this target; overwrite strategy skipped")
+		report.Limitations = append(report.Limitations, "execution unsupported for this target; overwrite and ROP strategies skipped")
 	}
 
 	return report, nil

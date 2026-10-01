@@ -1,6 +1,6 @@
 # PwnProbe
 
-PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads and stack-overflow variable/return overwrites). Remote sessions and further strategies are planned.
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads, stack-overflow variable/return overwrites, and two-argument ret2win ROP). Remote sessions and further strategies are planned.
 
 ## Build
 
@@ -38,7 +38,8 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 `solve` runs `detect` first, then tries each applicable strategy and stops at the first payload that yields a non-echoed flag, reporting that exact payload as a reproducible winner. It exits nonzero when no flag is recovered; a crash is never reported as a solve. The target runs in its own directory so a flag file beside it is readable.
 
 - **format_string** (when format-string behavior is confirmed): sends a bounded set of leak payloads (`%p` stack dump, positional `%N$s` reads). Stack-dump output is additionally reassembled from little-endian pointer leaks before matching, so a flag that never appears literally in stdout is still recovered.
-- **stack_overwrite** (when the target is an executable PwnProbe can run): brute-forces a line-based overflow, appending each magic constant scanned from the binary's code and each function address (on fixed-address, non-PIE binaries) after increasing padding lengths. A flag that then appears in the output recovers both the correct offset and the required value — for example a guard variable that must equal a magic constant, or a redirect to a flag-printing function — without those being hardcoded.
+- **stack_overwrite** (when the target is an executable PwnProbe can run): brute-forces a line-based overflow, appending each magic constant decoded from the binary's instructions and each function address (on fixed-address, non-PIE binaries) after increasing padding lengths. A flag that then appears in the output recovers both the correct offset and the required value — for example a guard variable that must equal a magic constant, or a redirect to a flag-printing function — without those being hardcoded. For ret2win targets that call into libc, a stack-aligning `ret` gadget is tried to clear the common `movaps` fault.
+- **rop_ret2win_args** (when `pop rdi; ret` and `pop rsi; ret` gadgets are present on a fixed-address binary): solves a win function that requires two register arguments equal to specific constants. It first locates the offset and function with sentinel arguments the target echoes, then builds a ROP chain setting RDI and RSI from the binary's decoded constants and calling the function.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
@@ -75,6 +76,6 @@ Test code, fixtures, adapters, reports, and compiled binaries are excluded from 
 
 ## Roadmap
 
-Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; further solve strategies (menu-driven protocols, PIE targets via a leak, ROP) behind explicit prerequisites; outcome verification across strategies.
+Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; further solve strategies (runtime-leak parsing for shellcode-on-stack and ret2libc, menu-driven protocols, PIE targets via a leak) behind explicit prerequisites; outcome verification across strategies.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.

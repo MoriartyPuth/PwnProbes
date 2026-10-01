@@ -183,10 +183,12 @@ func loadableRange(f *elf.File) (lo, hi uint64) {
 	return lo, hi
 }
 
-// scanMagics slides a 4-byte window over every executable section and keeps the
-// little-endian values that look like intentional constants rather than code
-// addresses, string bytes, padding, or small numbers. It returns them in
-// ascending order for a deterministic brute force.
+// scanMagics extracts the 32-bit immediate operands of the instructions that
+// typically encode a guard constant (cmp/mov/push/imul with an imm32) from every
+// executable section, then keeps those that look like intentional constants
+// rather than code addresses, string bytes, padding, or small numbers. Decoding
+// the operands instead of sliding a raw window keeps the candidate set small and
+// precise. Results are returned in ascending order for a deterministic search.
 func scanMagics(f *elf.File, lo, hi uint64) []uint32 {
 	set := map[uint32]bool{}
 	for _, sec := range f.Sections {
@@ -197,12 +199,10 @@ func scanMagics(f *elf.File, lo, hi uint64) []uint32 {
 		if err != nil {
 			continue
 		}
-		for i := 0; i+4 <= len(data); i++ {
-			v := binary.LittleEndian.Uint32(data[i : i+4])
-			if !interestingMagic(v, lo, hi) {
-				continue
+		for _, v := range extractImmediates(data) {
+			if interestingMagic(v, lo, hi) {
+				set[v] = true
 			}
-			set[v] = true
 		}
 	}
 	out := make([]uint32, 0, len(set))
@@ -210,6 +210,67 @@ func scanMagics(f *elf.File, lo, hi uint64) []uint32 {
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// extractImmediates returns the imm32 fields of recognized x86-64 instructions.
+// It is not a full disassembler: it starts a candidate decode at every byte,
+// skips a REX prefix, and reads the immediate for a small set of opcodes whose
+// operand layout is simple enough to locate the imm32 (cmp eax/push/mov-reg with
+// a fixed layout; group-1, mov r/m and imul with a ModR/M it decodes for length).
+// Starting at every offset admits some false positives, but far fewer than a raw
+// byte window, and the real guard constants are always included.
+func extractImmediates(d []byte) []uint32 {
+	out := []uint32{}
+	read4 := func(p int) (uint32, bool) {
+		if p >= 0 && p+4 <= len(d) {
+			return binary.LittleEndian.Uint32(d[p : p+4]), true
+		}
+		return 0, false
+	}
+	for i := 0; i < len(d); i++ {
+		j := i
+		if d[j] >= 0x40 && d[j] <= 0x4f { // REX prefix
+			j++
+			if j >= len(d) {
+				break
+			}
+		}
+		op := d[j]
+		switch {
+		case op == 0x3d || op == 0x68: // cmp eax,imm32 / push imm32
+			if v, ok := read4(j + 1); ok {
+				out = append(out, v)
+			}
+		case op >= 0xb8 && op <= 0xbf: // mov r32,imm32 (imm64 under REX.W: low dword)
+			if v, ok := read4(j + 1); ok {
+				out = append(out, v)
+			}
+		case op == 0x81 || op == 0xc7 || op == 0x69: // grp1 / mov r/m32,imm32 / imul
+			if j+1 >= len(d) {
+				continue
+			}
+			modrm := d[j+1]
+			mod, rm := modrm>>6, modrm&7
+			p := j + 2
+			if mod != 3 && rm == 4 { // SIB byte
+				p++
+			}
+			switch mod {
+			case 1:
+				p++ // disp8
+			case 2:
+				p += 4 // disp32
+			case 0:
+				if rm == 5 {
+					p += 4 // RIP-relative disp32
+				}
+			}
+			if v, ok := read4(p); ok {
+				out = append(out, v)
+			}
+		}
+	}
 	return out
 }
 
