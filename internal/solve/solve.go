@@ -60,6 +60,7 @@ type solver struct {
 	workDir string
 	timeout time.Duration
 	remote  string // host:port for a remote target; empty means a local subprocess
+	libc    string // explicit libc path for ret2libc; empty resolves the local one
 	report  *Report
 }
 
@@ -70,7 +71,7 @@ type solver struct {
 // set (host:port) the exploit runs over a live TCP session; otherwise the target
 // runs as a local subprocess in its own directory so a flag file beside it is
 // readable.
-func Solve(ctx context.Context, path, pattern, remote string, timeout time.Duration) (Report, error) {
+func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time.Duration) (Report, error) {
 	ex, err := extract.New(pattern)
 	if err != nil {
 		return Report{}, fmt.Errorf("compile flag pattern: %w", err)
@@ -95,14 +96,15 @@ func Solve(ctx context.Context, path, pattern, remote string, timeout time.Durat
 			"failure to recover a flag does not prove the target is unexploitable",
 		},
 	}
-	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, report: &report}
-
-	// Session strategies (live leak) work both locally and remotely.
-	sessionStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy}
+	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report}
 
 	if remote != "" {
-		report.Limitations = append(report.Limitations, "remote mode currently supports the live-leak strategies (shellcode, ret2libc); it assumes the local binary copy matches the remote, and ret2libc assumes a matching libc")
-		for _, strat := range sessionStrategies {
+		report.Limitations = append(report.Limitations, "remote mode runs the session strategies (shellcode, ret2libc, overflow-to-shell); it assumes the local binary copy matches the remote, and ret2libc needs a matching libc (--libc)")
+		// Leak strategies first: they gate on protections and skip fast when not
+		// applicable. The overflow brute force is far more costly per attempt, so
+		// it runs last and only when the targeted strategies did not apply.
+		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.stackOverwriteSessionStrategy}
+		for _, strat := range remoteStrategies {
 			if done, err := strat(ctx); err != nil {
 				return report, err
 			} else if done {
@@ -133,7 +135,7 @@ func Solve(ctx context.Context, path, pattern, remote string, timeout time.Durat
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := append([]func(context.Context) (bool, error){s.stackOverwriteStrategy, s.ropRet2winArgsStrategy}, sessionStrategies...)
+	localStrategies := []func(context.Context) (bool, error){s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.shellcodeStrategy, s.ret2libcStrategy}
 	for _, strat := range localStrategies {
 		if done, err := strat(ctx); err != nil {
 			return report, err

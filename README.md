@@ -47,7 +47,7 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 
 `internal/session` provides one interactive transport for a local subprocess and a remote TCP service: send, `RecvUntil(delim)`, and a prompt-agnostic `RecvUntilIdle` that collects output up to a blocking read. The leaked-address strategies run over it, reading a leak and replying in the same connection — the capability one-shot execution cannot offer, and what lets them handle ASLR and remote targets.
 
-`pwnprobe solve --remote host:port ./local_copy` analyzes the local binary copy (protections, gadgets, libc) and exploits the remote service over TCP. Remote mode currently runs the live-leak strategies (shellcode, ret2libc); it assumes the local copy matches the remote binary, and ret2libc assumes a matching libc. The overwrite, ROP, and format-string strategies remain local-only for now.
+`pwnprobe solve --remote host:port ./local_copy` analyzes the local binary copy (protections, gadgets, libc) and exploits the remote service over TCP. Remote mode runs the session strategies: the leaked-address ones (shellcode, ret2libc) first, then an overflow-to-shell brute force for a guard variable that gates `system("/bin/sh")`. It assumes the local copy matches the remote binary. For ret2libc against a remote whose libc differs from this machine's, pass `--libc /path/to/target/libc.so.6` so offsets are resolved from the correct libc. The ROP and format-string strategies remain local-only for now.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 

