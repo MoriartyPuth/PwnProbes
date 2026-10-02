@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
 	"github.com/MoriartyPuth/PwnProbes/internal/session"
 )
@@ -125,24 +124,7 @@ func (s *solver) liveAttempt(ctx context.Context, strategy string, build func(le
 
 	input := append(line, []byte(driveShell)...)
 	cands := s.ex.Find(out, input, "session")
-	recovered := extract.Recovered(cands)
-	a := Attempt{
-		Strategy:  strategy,
-		Payload:   string(input),
-		Note:      note,
-		Result:    runner.Result{Outcome: "session", ExitCode: -1, Stdout: out},
-		Candidate: cands,
-		Recovered: recovered,
-	}
-	s.report.Attempts = append(s.report.Attempts, a)
-	if len(recovered) > 0 {
-		s.report.Solved = true
-		s.report.Flags = recovered
-		winner := a
-		s.report.Winning = &winner
-		return true, nil
-	}
-	return false, nil
+	return s.finalize(strategy, note, input, runner.Result{Outcome: "session", ExitCode: -1, Stdout: out}, cands), nil
 }
 
 // maxSessionOverwrite bounds the session-based overflow search, where each

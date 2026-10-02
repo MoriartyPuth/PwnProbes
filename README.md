@@ -1,6 +1,6 @@
 # PwnProbe
 
-PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads, format-string GOT overwrites, format-string writes to a saved return address that defeat full RELRO, stack-overflow variable/return overwrites, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, and canary-bypass ret2win). Remote sessions and further strategies are planned.
+PwnProbe is a Go CLI for inspecting Linux ELF binaries and collecting evidence from local CTF programs. It provides static inspection, bounded execution, format-string behavior probes, flag extraction, and an automatic solver for simple local challenges (format-string reads, format-string GOT overwrites, format-string writes to a saved return address that defeat full RELRO, stack-overflow variable/return overwrites, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, and canary-bypass ret2win). It drives a local subprocess or a remote TCP service over one interactive session. Further strategies (heap, PIE without a leak, logic/argv puzzles) are planned.
 
 ## Build
 
@@ -51,7 +51,7 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 
 `internal/session` provides one interactive transport for a local subprocess and a remote TCP service: send, `RecvUntil(delim)`, and a prompt-agnostic `RecvUntilIdle` that collects output up to a blocking read. The leaked-address strategies run over it, reading a leak and replying in the same connection — the capability one-shot execution cannot offer, and what lets them handle ASLR and remote targets.
 
-`pwnprobe solve --remote host:port ./local_copy` analyzes the local binary copy (protections, gadgets, libc) and exploits the remote service over TCP. Remote mode runs the session strategies: the leaked-address ones (shellcode, ret2libc) first, then an overflow-to-shell brute force for a guard variable that gates `system("/bin/sh")`. It assumes the local copy matches the remote binary. For ret2libc against a remote whose libc differs from this machine's, pass `--libc /path/to/target/libc.so.6` so offsets are resolved from the correct libc. The ROP and format-string strategies remain local-only for now.
+`pwnprobe solve --remote host:port ./local_copy` analyzes the local binary copy (protections, gadgets, libc) and exploits the remote service over TCP. Remote mode runs the session strategies: the leaked-address ones (shellcode, ret2libc) first, then ret2syscall, canary-bypass ret2win, and an overflow-to-shell brute force for a guard variable that gates `system("/bin/sh")`. It assumes the local copy matches the remote binary. For ret2libc against a remote whose libc differs from this machine's, pass `--libc /path/to/target/libc.so.6` so offsets are resolved from the correct libc. The format-string strategies (GOT overwrite, write-to-return-address) and the one-shot overflow/ROP strategies run locally only for now. Session reads are bounded by an output cap and the run's deadline.
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
@@ -88,6 +88,6 @@ Test code, fixtures, adapters, reports, and compiled binaries are excluded from 
 
 ## Roadmap
 
-Restricted execution backend; held-out challenge evaluation; interactive local/remote sessions; debugger evidence for crash classification; further solve strategies (runtime-leak parsing for shellcode-on-stack and ret2libc, menu-driven protocols, PIE targets via a leak) behind explicit prerequisites; outcome verification across strategies.
+Shipped since 0.1.0: flag extraction, the solver strategies listed above, and interactive local/remote sessions. Planned: PIE without a leak (partial overwrite), logic/argv puzzles via symbolic execution, heap exploitation (menu-driven), full-RELRO libc-hook writes, restricted execution backend, debugger evidence for crash classification, and held-out challenge evaluation. See `docs/ARCHITECTURE.md` for the design behind these.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.

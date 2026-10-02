@@ -20,10 +20,17 @@ import (
 // ErrTimeout is returned by RecvUntil when the delimiter does not arrive in time.
 var ErrTimeout = errors.New("recv timeout")
 
+// MaxOutput caps how much a single Recv call accumulates and how much of the
+// transcript is retained, so a chatty or hostile target cannot grow memory
+// without bound (mirroring the one-shot runner's limit).
+const MaxOutput = 1 << 20
+
 // Conn is a bidirectional connection to a target. It is safe to call Send and
 // the Recv family from one goroutine; a background reader pumps the underlying
-// stream so reads can honor deadlines even on OS pipes.
+// stream so reads can honor deadlines even on OS pipes. Reads also return early
+// when the connection's context is cancelled.
 type Conn struct {
+	ctx    context.Context
 	w      io.Writer
 	closer io.Closer
 
@@ -37,10 +44,23 @@ type Conn struct {
 	closeOnce sync.Once
 }
 
-func newConn(r io.Reader, w io.Writer, closer io.Closer) *Conn {
-	c := &Conn{w: w, closer: closer, chunks: make(chan []byte, 32)}
+func newConn(ctx context.Context, r io.Reader, w io.Writer, closer io.Closer) *Conn {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c := &Conn{ctx: ctx, w: w, closer: closer, chunks: make(chan []byte, 32)}
 	go c.pump(r)
 	return c
+}
+
+// record appends to the retained transcript up to the cap.
+func (c *Conn) record(chunk []byte) {
+	if n := MaxOutput - c.received.Len(); n > 0 {
+		if len(chunk) > n {
+			chunk = chunk[:n]
+		}
+		c.received.Write(chunk)
+	}
 }
 
 func (c *Conn) pump(r io.Reader) {
@@ -77,7 +97,8 @@ func (c *Conn) SendLine(b []byte) error {
 }
 
 // RecvUntil reads until delim appears (returned inclusive) or timeout elapses.
-// On end-of-stream it returns whatever remained with io.EOF.
+// It also returns early if the connection's context is cancelled, or once the
+// output cap is reached. On end-of-stream it returns whatever remained with io.EOF.
 func (c *Conn) RecvUntil(delim []byte, timeout time.Duration) ([]byte, error) {
 	deadline := time.Now().Add(timeout)
 	for {
@@ -87,12 +108,18 @@ func (c *Conn) RecvUntil(delim []byte, timeout time.Duration) ([]byte, error) {
 			c.leftover = c.leftover[end:]
 			return out, nil
 		}
+		if len(c.leftover) >= MaxOutput {
+			return nil, errors.New("recv exceeded output cap before delimiter")
+		}
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
 			return nil, ErrTimeout
 		}
 		timer := time.NewTimer(remaining)
 		select {
+		case <-c.ctx.Done():
+			timer.Stop()
+			return nil, c.ctx.Err()
 		case chunk, ok := <-c.chunks:
 			timer.Stop()
 			if !ok {
@@ -107,30 +134,35 @@ func (c *Conn) RecvUntil(delim []byte, timeout time.Duration) ([]byte, error) {
 				return out, err
 			}
 			c.leftover = append(c.leftover, chunk...)
-			c.received.Write(chunk)
+			c.record(chunk)
 		case <-timer.C:
 			return nil, ErrTimeout
 		}
 	}
 }
 
-// RecvUntilIdle reads until no new data has arrived for idle, or end-of-stream.
-// It is prompt-agnostic: an interactive target that stops to read input falls
-// silent, so this reliably collects everything printed up to that point,
-// including a leak printed before a blocking read.
+// RecvUntilIdle reads until no new data has arrived for idle, or end-of-stream,
+// context cancellation, or the output cap. It is prompt-agnostic: an interactive
+// target that stops to read input falls silent, so this reliably collects
+// everything printed up to that point, including a leak before a blocking read.
 func (c *Conn) RecvUntilIdle(idle time.Duration) []byte {
 	out := c.leftover
 	c.leftover = nil
 	timer := time.NewTimer(idle)
 	defer timer.Stop()
 	for {
+		if len(out) >= MaxOutput {
+			return out
+		}
 		select {
+		case <-c.ctx.Done():
+			return out
 		case chunk, ok := <-c.chunks:
 			if !ok {
 				return out
 			}
 			out = append(out, chunk...)
-			c.received.Write(chunk)
+			c.record(chunk)
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -169,7 +201,7 @@ func Dial(ctx context.Context, addr string, timeout time.Duration) (*Conn, error
 	if err != nil {
 		return nil, err
 	}
-	return newConn(nc, nc, nc), nil
+	return newConn(ctx, nc, nc, nc), nil
 }
 
 // Spawn starts path as a child process and returns a connection to its stdin and
@@ -206,5 +238,5 @@ func Spawn(ctx context.Context, path string, args, env []string, dir string) (*C
 		_ = stdin.Close()
 		return pr.Close()
 	})
-	return newConn(pr, stdin, closer), nil
+	return newConn(cctx, pr, stdin, closer), nil
 }

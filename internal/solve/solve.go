@@ -16,6 +16,7 @@ package solve
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -31,13 +32,17 @@ import (
 const MaxStackArgs = 40
 
 // Attempt records one payload, its transcript, and the flags it recovered.
+// PayloadHex is the byte-exact payload; Payload is a display copy and may contain
+// U+FFFD once serialized, so a consumer that needs the exact bytes uses
+// PayloadHex (JSON cannot carry invalid UTF-8 verbatim).
 type Attempt struct {
-	Strategy  string              `json:"strategy"`
-	Payload   string              `json:"payload"`
-	Note      string              `json:"note,omitempty"`
-	Result    runner.Result       `json:"result"`
-	Candidate []extract.Candidate `json:"candidates,omitempty"`
-	Recovered []string            `json:"recovered,omitempty"`
+	Strategy   string              `json:"strategy"`
+	Payload    string              `json:"payload"`
+	PayloadHex string              `json:"payload_hex"`
+	Note       string              `json:"note,omitempty"`
+	Result     runner.Result       `json:"result"`
+	Candidate  []extract.Candidate `json:"candidates,omitempty"`
+	Recovered  []string            `json:"recovered,omitempty"`
 }
 
 // Report is the full record of a solve run. Solved is true only when at least
@@ -158,20 +163,39 @@ func (s *solver) attempt(ctx context.Context, strategy, note string, payload []b
 	cands = append(cands, s.ex.Find(result.Stderr, payload, "stderr")...)
 	if decodeLeak {
 		if decoded := extract.DecodeLeak(result.Stdout); decoded != "" {
-			cands = append(cands, s.ex.Find(decoded, payload, "stack_leak")...)
+			// Compare the decoded candidate against the decoded input too, so an
+			// echoed encoding (hex the program reflected) is caught as an echo
+			// rather than counted as a recovered flag.
+			echoInput := append(append([]byte{}, payload...), extract.DecodeLeak(string(payload))...)
+			cands = append(cands, s.ex.Find(decoded, echoInput, "stack_leak")...)
 		}
 	}
+	return s.finalize(strategy, note, payload, result, cands), nil
+}
+
+// finalize records an attempt and, when it recovered a non-echoed flag, marks the
+// report solved. It stores the byte-exact payload as hex (PayloadHex) alongside
+// the display string, since JSON cannot carry invalid UTF-8 verbatim.
+func (s *solver) finalize(strategy, note string, payload []byte, result runner.Result, cands []extract.Candidate) bool {
 	recovered := extract.Recovered(cands)
-	a := Attempt{Strategy: strategy, Payload: string(payload), Note: note, Result: result, Candidate: cands, Recovered: recovered}
+	a := Attempt{
+		Strategy:   strategy,
+		Payload:    string(payload),
+		PayloadHex: hex.EncodeToString(payload),
+		Note:       note,
+		Result:     result,
+		Candidate:  cands,
+		Recovered:  recovered,
+	}
 	s.report.Attempts = append(s.report.Attempts, a)
 	if len(recovered) > 0 {
 		s.report.Solved = true
 		s.report.Flags = recovered
 		winner := a
 		s.report.Winning = &winner
-		return true, nil
+		return true
 	}
-	return false, nil
+	return false
 }
 
 func hasFormatString(d detect.Report) bool {

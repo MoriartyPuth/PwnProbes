@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/inspect"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
 )
@@ -225,22 +224,6 @@ func (s *solver) canaryAttempt(ctx context.Context, idx, off int, t tail) (bool,
 
 	input := append(append([]byte{}, line...), []byte(driveShell)...)
 	cands := s.ex.Find(out, input, "session")
-	recovered := extract.Recovered(cands)
-	a := Attempt{
-		Strategy:  "canary_ret2win",
-		Payload:   string(line),
-		Note:      fmt.Sprintf("canary_idx=%d padding=%d canary=%#x tail=%s", idx, off, canary, t.note),
-		Result:    runner.Result{Outcome: "session", ExitCode: -1, Stdout: out},
-		Candidate: cands,
-		Recovered: recovered,
-	}
-	s.report.Attempts = append(s.report.Attempts, a)
-	if len(recovered) > 0 {
-		s.report.Solved = true
-		s.report.Flags = recovered
-		winner := a
-		s.report.Winning = &winner
-		return true, nil
-	}
-	return false, nil
+	note := fmt.Sprintf("canary_idx=%d padding=%d canary=%#x tail=%s", idx, off, canary, t.note)
+	return s.finalize("canary_ret2win", note, line, runner.Result{Outcome: "session", ExitCode: -1, Stdout: out}, cands), nil
 }

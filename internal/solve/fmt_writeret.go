@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
 )
 
@@ -90,24 +89,8 @@ func (s *solver) fmtWriteRetAttempt(ctx context.Context, off, vIdx int, win func
 
 	marker := []byte("fmt-write-ret") // our sends never contain the flag
 	cands := s.ex.Find(out, marker, "session")
-	recovered := extract.Recovered(cands)
-	a := Attempt{
-		Strategy:  "fmt_write_ret",
-		Payload:   string(payload),
-		Note:      fmt.Sprintf("offset=%d vidx=%d target=%#x win=%#x(%s)", off, vIdx, target, win.addr, win.name),
-		Result:    runner.Result{Outcome: "session", ExitCode: -1, Stdout: out},
-		Candidate: cands,
-		Recovered: recovered,
-	}
-	s.report.Attempts = append(s.report.Attempts, a)
-	if len(recovered) > 0 {
-		s.report.Solved = true
-		s.report.Flags = recovered
-		winner := a
-		s.report.Winning = &winner
-		return true, nil
-	}
-	return false, nil
+	note := fmt.Sprintf("offset=%d vidx=%d target=%#x win=%#x(%s)", off, vIdx, target, win.addr, win.name)
+	return s.finalize("fmt_write_ret", note, payload, runner.Result{Outcome: "session", ExitCode: -1, Stdout: out}, cands), nil
 }
 
 // parseStackValues returns the stack-range pointer values in a leak, in order.
