@@ -86,18 +86,20 @@ the write primitive is retargeted rather than the mitigation defeated.
   (`__free_hook`/`__malloc_hook`, glibc < 2.34) need a libc leak plus a reachable
   `free`/`malloc` with a controllable argument.
 
-### 2. PIE without a leak — medium, narrow
+### 2. PIE without a leak — DONE (`partial.go`)
 
-No leak at all is unsolvable on 64-bit (≈28 bits of base entropy). The realistic
-techniques:
-
-- **Partial overwrite**: overwrite only the low 1–2 bytes of a saved return
-  address. Page-aligned bits are fixed under PIE, so redirecting within the code
-  page is free and reaching a nearby target costs about one nibble (≈16 tries) —
-  a retry loop against a forking/`socat` service.
-- 32-bit PIE has low enough entropy (~8 bits) to brute; 64-bit does not.
-- Otherwise: find a leak first, which reduces to the PIE-with-leak case the
-  session layer already handles.
+No leak at all is unsolvable on 64-bit (≈28 bits of base entropy), so the
+implemented technique is the **partial overwrite**: overwrite only the low 1–2
+bytes of a saved return address. The page-aligned low 12 bits are fixed under
+PIE, so a one-byte overwrite redirects within a 256-byte block for free, and a
+two-byte overwrite reaches a 64 KiB window leaving one ASLR nibble. Since there
+is no leak, `partial.go` retries across fresh runs (each connection re-randomises
+the base) until the nibble aligns — roughly 1 in 16, nearer 1 in 32 once the
+64 KiB-carry edge case is counted. It requires a read-style overflow that does
+not append a terminator, so the untouched high bytes survive; the offset and win
+function are brute-forced, win-named functions first. Validated against a PIE
+read-overflow lab (solved in ~50 s). 32-bit PIE (~8 bits) would be bruteable more
+cheaply; a cooperative leak still reduces this to the PIE-with-leak case.
 
 ### 3. Logic / argv / file-descriptor puzzles (e.g. pwnable.kr `fd`) — different engine
 
@@ -130,8 +132,8 @@ subset coverage; best treated as a long-term track.
 ## Recommended order
 
 1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
-2. `partialOverwrite` for PIE-without-leak — classic, bounded. **Next.**
-3. angr strategy for logic/argv/fd — medium effort, whole new category.
+2. ~~`partialOverwrite` for PIE-without-leak~~ — DONE (`partial.go`).
+3. angr strategy for logic/argv/fd — medium effort, whole new category. **Next.**
 4. Heap — long-term research track, scoped to tcache first.
 
 ## Design invariants to preserve

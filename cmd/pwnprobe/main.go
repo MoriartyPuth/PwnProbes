@@ -21,7 +21,7 @@ import (
 	"github.com/MoriartyPuth/PwnProbes/internal/solve"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
 
 // runOutput augments a run transcript with flags the program disclosed that the
 // caller did not supply. Echoed input is excluded by the extractor.
