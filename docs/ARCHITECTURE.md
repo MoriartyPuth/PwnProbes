@@ -121,14 +121,21 @@ password/key/argv checks, the common logic class.
 
 ### 4. Heap exploitation — STARTED (`heap.go`), long-term track
 
-First increment implemented: a menu-driven **use-after-free that overwrites an
-in-binary function pointer**. `heap.go` infers a conventional numbered menu by
-keyword (create / free / use / edit), then runs create → free → reclaim-with-win
-→ use, brute-forcing the function-pointer offset. It needs no libc leak (non-PIE
-win) and does not touch tcache fd pointers, so safe-linking (glibc >= 2.32) is
-moot. Validated against a UAF lab (~9 s). A related fix: the one-shot overflow
-brute now abandons a target that only loops (interactive menu) after repeated
-deadline timeouts, and heap runs before it.
+Implemented: a menu-driven **use-after-free that overwrites an in-binary function
+pointer**. `heap.go` infers a numbered menu by keyword (create / free / use /
+edit, with synonyms), then runs create → free → reclaim-with-win → use,
+brute-forcing the function-pointer offset. The menu interaction is
+**prompt-driven**: after a choice, each sub-prompt is read and answered by role
+(size / index / data) via `classifyPrompt`, so size-prompted allocators and
+index-driven edit/use/delete menus are handled, not only the degenerate
+one-input-per-action shape. When the allocator prompts for a size, a few
+candidate sizes are tried; otherwise size retries are skipped. It needs no libc
+leak (non-PIE win) and does not touch tcache fd pointers, so safe-linking (glibc
+>= 2.32) is moot. Validated against three UAF labs: a minimal menu, a
+size-and-index-prompted menu, and a synonym-worded menu with the fn pointer at a
+non-zero offset. A related fix: the one-shot overflow brute now abandons a target
+that only loops (interactive menu) after repeated deadline timeouts, and heap
+runs before it.
 
 The rest of the heap track remains the large part below:
 
@@ -151,9 +158,10 @@ subset coverage; best treated as a long-term track.
 1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
 2. ~~`partialOverwrite` for PIE-without-leak~~ — DONE (`partial.go`).
 3. ~~angr strategy for logic/argv/fd~~ — DONE (`angr.go`).
-4. Heap — STARTED (`heap.go`: menu-driven UAF fn-ptr overwrite). Remaining:
-   tcache poisoning, libc-hook overwrite with a leak, size-prompted allocators,
-   and richer menu inference.
+4. Heap — STARTED (`heap.go`: prompt-driven UAF fn-ptr overwrite, size-prompted
+   and index-driven menus, richer keyword inference). Remaining: tcache poisoning
+   and libc-hook overwrite (both need a heap/libc leak and, on glibc >= 2.32,
+   defeating safe-linking), and truly non-numeric (command-word) menus.
 
 ## Design invariants to preserve
 
