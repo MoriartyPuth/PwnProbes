@@ -101,19 +101,23 @@ function are brute-forced, win-named functions first. Validated against a PIE
 read-overflow lab (solved in ~50 s). 32-bit PIE (~8 bits) would be bruteable more
 cheaply; a cooperative leak still reduces this to the PIE-with-leak case.
 
-### 3. Logic / argv / file-descriptor puzzles (e.g. pwnable.kr `fd`) — different engine
+### 3. Logic / argv / file-descriptor puzzles — DONE (`angr.go`)
 
-These are program comprehension, not memory corruption. The right tool is
-**symbolic execution** (angr); `fd`, `collision`, `passcode` are its canonical
-examples.
+These are program comprehension, not memory corruption, so the engine is
+**symbolic execution** (angr). `angr.go` writes a self-contained harness to a
+temp file and runs it under a Python that has angr (`PWNPROBE_PYTHON`, else
+`python3`; skipped when absent). The harness builds a CFG, finds blocks that
+reach a shell/flag (call sites of `system`/`execve`/… or a win function), makes
+argv[1..3] and stdin symbolic (printable), explores to a target, and prints the
+solving argv and stdin. PwnProbe then **replays** the concrete input through the
+one-shot runner and keeps the flag only if it actually prints — same honest
+oracle as every other strategy. Local only (the replay controls argv), bounded by
+a subprocess timeout. Validated against an argv+stdin logic lab (~5 s).
 
-- Add an `angr`-backed strategy: a Python harness PwnProbe shells out to (as it
-  already does for `ldd`/`setarch`). Mark the "win" basic block (scan for xrefs to
-  `system`/`execve` or a `cat flag`/flag string), let angr solve for the inputs
-  (argv, stdin, symbolic fd numbers) that reach it, then replay the concrete
-  solution over the session.
-- Cost: a heavy Python/angr dependency and per-binary time/memory limits. Opens a
-  category the corruption-based solver structurally cannot reach.
+Known limits: a read from a *symbolic* file descriptor (as in pwnable.kr `fd`) is
+modelled loosely, so the solved input may not replay; and the replay needs a
+binary this host can execute (a 32-bit target needs multilib). The strategy suits
+password/key/argv checks, the common logic class.
 
 ### 4. Heap exploitation — research-grade, largest project
 
@@ -133,8 +137,8 @@ subset coverage; best treated as a long-term track.
 
 1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
 2. ~~`partialOverwrite` for PIE-without-leak~~ — DONE (`partial.go`).
-3. angr strategy for logic/argv/fd — medium effort, whole new category. **Next.**
-4. Heap — long-term research track, scoped to tcache first.
+3. ~~angr strategy for logic/argv/fd~~ — DONE (`angr.go`).
+4. Heap — long-term research track, scoped to tcache first. **Next.**
 
 ## Design invariants to preserve
 

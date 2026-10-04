@@ -95,7 +95,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		Attempts: []Attempt{},
 		Flags:    []string{},
 		Limitations: []string{
-			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, canary-bypass ret2win, and PIE partial-overwrite (no leak; retried across runs for the ASLR nibble)",
+			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, canary-bypass ret2win, PIE partial-overwrite (no leak), and symbolic-execution solving of logic/argv/stdin puzzles (angr, when installed)",
 			"leaked-address strategies run over a live session (local subprocess or remote TCP), so they work with ASLR enabled",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
 			"failure to recover a flag does not prove the target is unexploitable",
@@ -140,7 +140,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.partialOverwriteStrategy}
+	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy}
 	for _, strat := range localStrategies {
 		if done, err := strat(ctx); err != nil {
 			return report, err
