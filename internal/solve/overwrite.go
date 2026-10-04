@@ -37,7 +37,7 @@ func (s *solver) stackOverwriteStrategy(ctx context.Context) (bool, error) {
 		s.report.Limitations = append(s.report.Limitations, "no magic constants or function addresses extracted; overwrite strategy had nothing to try")
 		return false, nil
 	}
-	attempts := 0
+	attempts, timeouts := 0, 0
 	for _, phase := range [][]tail{funcTails, magicTails} {
 		for _, pad := range paddingLengths() {
 			for _, t := range phase {
@@ -57,6 +57,17 @@ func (s *solver) stackOverwriteStrategy(ctx context.Context) (bool, error) {
 				note := fmt.Sprintf("padding=%d tail=%s", pad, t.note)
 				if done, err := s.attempt(ctx, "stack_overwrite", note, payload, false); err != nil || done {
 					return done, err
+				}
+				// A target that neither exits nor crashes but runs to the
+				// deadline on every attempt is interactive/looping, not a
+				// one-shot stdin overflow; abandon this (slow) brute.
+				if s.lastOutcome == "timeout" {
+					if timeouts++; timeouts >= 12 {
+						s.report.Limitations = append(s.report.Limitations, "target runs to the deadline on each input (interactive/looping); one-shot overflow brute abandoned")
+						return false, nil
+					}
+				} else {
+					timeouts = 0
 				}
 			}
 		}

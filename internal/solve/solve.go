@@ -67,6 +67,8 @@ type solver struct {
 	remote  string // host:port for a remote target; empty means a local subprocess
 	libc    string // explicit libc path for ret2libc; empty resolves the local one
 	report  *Report
+
+	lastOutcome string // outcome of the most recent recorded attempt
 }
 
 // Solve runs each applicable strategy in turn, stopping at the first payload that
@@ -95,7 +97,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		Attempts: []Attempt{},
 		Flags:    []string{},
 		Limitations: []string{
-			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, canary-bypass ret2win, PIE partial-overwrite (no leak), and symbolic-execution solving of logic/argv/stdin puzzles (angr, when installed)",
+			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, executable-stack shellcode, ret2libc, canary-bypass ret2win, PIE partial-overwrite (no leak), heap use-after-free function-pointer overwrite via tcache reclaim (menu-driven), and symbolic-execution solving of logic/argv/stdin puzzles (angr, when installed)",
 			"leaked-address strategies run over a live session (local subprocess or remote TCP), so they work with ASLR enabled",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
 			"failure to recover a flag does not prove the target is unexploitable",
@@ -108,7 +110,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		// Leak strategies first: they gate on protections and skip fast when not
 		// applicable. The overflow brute force is far more costly per attempt, so
 		// it runs last and only when the targeted strategies did not apply.
-		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.ropExecveStrategy, s.canaryStrategy, s.stackOverwriteSessionStrategy, s.partialOverwriteStrategy}
+		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.ropExecveStrategy, s.canaryStrategy, s.heapUAFStrategy, s.stackOverwriteSessionStrategy, s.partialOverwriteStrategy}
 		for _, strat := range remoteStrategies {
 			if done, err := strat(ctx); err != nil {
 				return report, err
@@ -140,7 +142,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy}
+	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.heapUAFStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy}
 	for _, strat := range localStrategies {
 		if done, err := strat(ctx); err != nil {
 			return report, err
@@ -177,6 +179,7 @@ func (s *solver) attempt(ctx context.Context, strategy, note string, payload []b
 // report solved. It stores the byte-exact payload as hex (PayloadHex) alongside
 // the display string, since JSON cannot carry invalid UTF-8 verbatim.
 func (s *solver) finalize(strategy, note string, payload []byte, result runner.Result, cands []extract.Candidate) bool {
+	s.lastOutcome = result.Outcome
 	recovered := extract.Recovered(cands)
 	a := Attempt{
 		Strategy:   strategy,

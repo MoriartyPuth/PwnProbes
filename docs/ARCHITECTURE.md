@@ -119,7 +119,20 @@ modelled loosely, so the solved input may not replay; and the replay needs a
 binary this host can execute (a 32-bit target needs multilib). The strategy suits
 password/key/argv checks, the common logic class.
 
-### 4. Heap exploitation — research-grade, largest project
+### 4. Heap exploitation — STARTED (`heap.go`), long-term track
+
+First increment implemented: a menu-driven **use-after-free that overwrites an
+in-binary function pointer**. `heap.go` infers a conventional numbered menu by
+keyword (create / free / use / edit), then runs create → free → reclaim-with-win
+→ use, brute-forcing the function-pointer offset. It needs no libc leak (non-PIE
+win) and does not touch tcache fd pointers, so safe-linking (glibc >= 2.32) is
+moot. Validated against a UAF lab (~9 s). A related fix: the one-shot overflow
+brute now abandons a target that only loops (interactive menu) after repeated
+deadline timeouts, and heap runs before it.
+
+The rest of the heap track remains the large part below:
+
+### Full heap — research-grade, largest remaining project
 
 Needs three capabilities PwnProbe lacks:
 
@@ -138,7 +151,9 @@ subset coverage; best treated as a long-term track.
 1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
 2. ~~`partialOverwrite` for PIE-without-leak~~ — DONE (`partial.go`).
 3. ~~angr strategy for logic/argv/fd~~ — DONE (`angr.go`).
-4. Heap — long-term research track, scoped to tcache first. **Next.**
+4. Heap — STARTED (`heap.go`: menu-driven UAF fn-ptr overwrite). Remaining:
+   tcache poisoning, libc-hook overwrite with a leak, size-prompted allocators,
+   and richer menu inference.
 
 ## Design invariants to preserve
 
