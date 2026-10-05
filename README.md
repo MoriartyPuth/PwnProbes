@@ -105,6 +105,6 @@ The end-to-end solve suite — challenge sources, build recipes, a manifest, exp
 
 ## Roadmap
 
-Shipped since 0.1.0: flag extraction, the solver strategies listed above, and interactive local/remote sessions. Planned: PIE without a leak (partial overwrite), logic/argv puzzles via symbolic execution, heap exploitation (menu-driven), full-RELRO libc-hook writes, restricted execution backend, debugger evidence for crash classification, and held-out challenge evaluation. See `docs/ARCHITECTURE.md` for the design behind these.
+Shipped since 0.1.0: flag extraction, the solver strategies listed above — including PIE-without-a-leak (partial overwrite), logic/argv/stdin puzzles via symbolic execution, and menu-driven heap use-after-free (prompt-driven, size-prompted and index-driven menus, since 0.5.0) — and interactive local/remote sessions. Planned: broader heap exploitation (tcache poisoning, libc-hook overwrites), full-RELRO libc-hook writes, a restricted execution backend, debugger evidence for crash classification, and a held-out challenge evaluation set. See `docs/ARCHITECTURE.md` for the design behind these.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.
