@@ -119,9 +119,9 @@ modelled loosely, so the solved input may not replay; and the replay needs a
 binary this host can execute (a 32-bit target needs multilib). The strategy suits
 password/key/argv checks, the common logic class.
 
-### 4. Heap exploitation — STARTED (`heap.go`), long-term track
+### 4. Heap exploitation — menu-driven UAF DONE (`heap.go`, v0.5.0); broader heap is a long-term track
 
-Implemented: a menu-driven **use-after-free that overwrites an in-binary function
+Done: a menu-driven **use-after-free that overwrites an in-binary function
 pointer**. `heap.go` infers a numbered menu by keyword (create / free / use /
 edit, with synonyms), then runs create → free → reclaim-with-win → use,
 brute-forcing the function-pointer offset. The menu interaction is
@@ -158,10 +158,12 @@ subset coverage; best treated as a long-term track.
 1. ~~Full-RELRO via fmt write to saved return address~~ — DONE (`fmt_writeret.go`).
 2. ~~`partialOverwrite` for PIE-without-leak~~ — DONE (`partial.go`).
 3. ~~angr strategy for logic/argv/fd~~ — DONE (`angr.go`).
-4. Heap — STARTED (`heap.go`: prompt-driven UAF fn-ptr overwrite, size-prompted
-   and index-driven menus, richer keyword inference). Remaining: tcache poisoning
-   and libc-hook overwrite (both need a heap/libc leak and, on glibc >= 2.32,
-   defeating safe-linking), and truly non-numeric (command-word) menus.
+4. ~~Menu-driven heap UAF~~ — DONE (`heap.go`, v0.5.0): prompt-driven function-pointer
+   overwrite with size-prompted and index-driven menus and richer keyword
+   inference.
+5. Broader heap — NOT STARTED. tcache poisoning and libc-hook overwrite (both
+   need a heap/libc leak and, on glibc >= 2.32, defeating safe-linking), and
+   truly non-numeric (command-word) menus.
 
 ## Design invariants to preserve
 
