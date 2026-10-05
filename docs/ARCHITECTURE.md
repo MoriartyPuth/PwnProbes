@@ -161,9 +161,16 @@ subset coverage; best treated as a long-term track.
 4. ~~Menu-driven heap UAF~~ — DONE (`heap.go`, v0.5.0): prompt-driven function-pointer
    overwrite with size-prompted and index-driven menus and richer keyword
    inference.
-5. Broader heap — NOT STARTED. tcache poisoning and libc-hook overwrite (both
+5. ~~ret2plt call with an in-binary string argument~~ — DONE (`ret2plt.go`):
+   `pop rdi; ret` → address of a command string in the binary → `system`/`exec*`
+   PLT stub, resolving the stub from `.rela.plt` and the `FF 25` GOT-indirect
+   jump. Solves the "call `system('/bin/cat flag.txt')`" class (e.g. ROP
+   Emporium's `split`); validated against the real `split` binary and
+   `labs/lab14_ret2plt_string`.
+6. Broader heap — NOT STARTED. tcache poisoning and libc-hook overwrite (both
    need a heap/libc leak and, on glibc >= 2.32, defeating safe-linking), and
-   truly non-numeric (command-word) menus.
+   truly non-numeric (command-word) menus. Beyond ret2plt, multi-call / ≥3-arg
+   ROP chains (ROP Emporium `callme`-style) remain unimplemented.
 
 ## Design invariants to preserve
 
