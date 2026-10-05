@@ -1,5 +1,4 @@
 /bin/
-*_test.go
 /fixtures/
 /examples/
 /scripts/original_detection.py

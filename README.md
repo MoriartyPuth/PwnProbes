@@ -21,6 +21,16 @@ Remove-Item Env:GOOS
 Remove-Item Env:GOARCH
 ```
 
+The unit tests are platform-independent (no target execution) and run anywhere:
+
+```sh
+go test ./...
+```
+
+They cover flag extraction, payload serialization, input parsing (leak and
+menu inference), and context cancellation. The end-to-end solve suite lives in
+the separate [evaluation repository](#evaluation-suite).
+
 ## Usage
 
 ```sh
