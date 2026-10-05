@@ -89,6 +89,10 @@ Each manifest entry contains `name`, `source` (relative to the manifest), `flags
 
 Test code, fixtures, adapters, reports, and compiled binaries are excluded from this repository. The initial local validation passed six controlled fixture cases and the runner/metadata/CLI checks. An easy local format-string challenge was detected and a manually supplied flag-read input succeeded ten times; the patched control did not disclose the flag. These results are not a general exploit-success benchmark.
 
+## Evaluation suite
+
+The end-to-end solve suite — challenge sources, build recipes, a manifest, expected outcomes, and comparison results — lives in a separate repository so the tool can be cloned on its own: [**MoriartyPuth/PwnProbe-benchmarks**](https://github.com/MoriartyPuth/PwnProbe-benchmarks). It builds each lab, runs `pwnprobe solve`, and checks that the recovered flag matches, with results recorded against a specific PwnProbe commit. The latest recorded run solved **16/16 labs — one per solve strategy — against commit `a69007b` (v0.5.0)** on Ubuntu 24.04 / glibc 2.39; see [`results/a69007b.md`](https://github.com/MoriartyPuth/PwnProbe-benchmarks/blob/main/results/a69007b.md). That repository also carries a `detect-manifest.json` for the detection `benchmark` command above. Small unit tests (parsing, payload serialization, cancellation, flag extraction) stay alongside the code here; the labs do not.
+
 ## Roadmap
 
 Shipped since 0.1.0: flag extraction, the solver strategies listed above, and interactive local/remote sessions. Planned: PIE without a leak (partial overwrite), logic/argv puzzles via symbolic execution, heap exploitation (menu-driven), full-RELRO libc-hook writes, restricted execution backend, debugger evidence for crash classification, and held-out challenge evaluation. See `docs/ARCHITECTURE.md` for the design behind these.
