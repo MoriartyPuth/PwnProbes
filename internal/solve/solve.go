@@ -110,7 +110,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		// Leak strategies first: they gate on protections and skip fast when not
 		// applicable. The overflow brute force is far more costly per attempt, so
 		// it runs last and only when the targeted strategies did not apply.
-		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.canaryStrategy, s.heapUAFStrategy, s.stackOverwriteSessionStrategy, s.partialOverwriteStrategy}
+		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.canaryStrategy, s.heapUAFStrategy, s.stackOverwriteSessionStrategy, s.partialOverwriteStrategy, s.ropPlannerStrategy}
 		for _, strat := range remoteStrategies {
 			if done, err := strat(ctx); err != nil {
 				return report, err
@@ -142,7 +142,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.heapUAFStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy}
+	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.heapUAFStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy, s.ropPlannerStrategy}
 	for _, strat := range localStrategies {
 		if done, err := strat(ctx); err != nil {
 			return report, err
