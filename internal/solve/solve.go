@@ -97,7 +97,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		Attempts: []Attempt{},
 		Flags:    []string{},
 		Limitations: []string{
-			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, ret2plt call of an imported function (system/exec) with an in-binary string argument, executable-stack shellcode, ret2libc, canary-bypass ret2win, PIE partial-overwrite (no leak), heap use-after-free function-pointer overwrite (prompt-driven numbered menu, size-prompted and index-driven allocators supported), and symbolic-execution solving of logic/argv/stdin puzzles (angr, when installed)",
+			"strategies implemented: format-string read/GOT-overwrite/write-to-return-address, stack-overflow variable/return overwrite, two-argument ret2win ROP, ret2syscall execve ROP, ret2plt call of an imported function (system/exec) with an in-binary string argument, ROP-planner synthesis of multi-argument and chained calls, executable-stack shellcode, ret2libc, canary-bypass ret2win, PIE partial-overwrite (no leak), heap use-after-free function-pointer overwrite (prompt-driven numbered menu, size-prompted and index-driven allocators supported), and symbolic-execution solving of logic/argv/stdin puzzles (angr, when installed)",
 			"leaked-address strategies run over a live session (local subprocess or remote TCP), so they work with ASLR enabled",
 			"a recovered flag must match the configured pattern and be absent from the payload that produced it",
 			"failure to recover a flag does not prove the target is unexploitable",

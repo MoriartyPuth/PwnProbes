@@ -167,10 +167,19 @@ subset coverage; best treated as a long-term track.
    jump. Solves the "call `system('/bin/cat flag.txt')`" class (e.g. ROP
    Emporium's `split`); validated against the real `split` binary and
    `labs/lab14_ret2plt_string`.
-6. Broader heap — NOT STARTED. tcache poisoning and libc-hook overwrite (both
+6. ~~ROP chain planner, phase 0+1~~ — DONE (`internal/rop` + `rop_planner.go`):
+   a dependency-free gadget catalog (pop-sequences, ret, syscall), a register
+   solver (covering multi-pop gadget, else composed single pops), a chain
+   assembler (`BuildCall`/`BuildCallSeq`), and a constant harvester (`movabs`/
+   `mov` immediates, incl. from a sibling shared object). The planner strategy
+   synthesizes multi-argument and *chained* calls to a related function group
+   (prefix + trailing ordinal). Validated against the real ROP Emporium `callme`
+   (three chained 3-argument calls) and `labs/lab15_rop_chain`. Remaining planner
+   phases: write-what-where (`write4`/`badchars`), `ret2csu` universal gadget
+   (`fluff`/`ret2csu`), and stack pivot + leaked-libc gadgets (`pivot`).
+7. Broader heap — NOT STARTED. tcache poisoning and libc-hook overwrite (both
    need a heap/libc leak and, on glibc >= 2.32, defeating safe-linking), and
-   truly non-numeric (command-word) menus. Beyond ret2plt, multi-call / ≥3-arg
-   ROP chains (ROP Emporium `callme`-style) remain unimplemented.
+   truly non-numeric (command-word) menus.
 
 ## Design invariants to preserve
 
