@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
-	"github.com/MoriartyPuth/PwnProbes/internal/session"
 )
 
 // These strategies use a runtime address the target leaks at run time. They run
@@ -72,9 +72,9 @@ func (s *solver) idle() time.Duration {
 
 // open starts a connection to the target: a remote TCP service when a remote
 // address is set, otherwise a local subprocess running in the binary's directory.
-func (s *solver) open(ctx context.Context) (*session.Conn, func(), error) {
+func (s *solver) open(ctx context.Context) (execution.Session, func(), error) {
 	if s.remote != "" {
-		conn, err := session.Dial(ctx, s.remote, 5*time.Second)
+		conn, err := s.exec.Open(ctx, execution.SessionRequest{Remote: s.remote, DialTimeout: 5 * time.Second})
 		return conn, func() {}, err
 	}
 	tmp, err := os.MkdirTemp("", "pwnprobe-sess-")
@@ -83,7 +83,7 @@ func (s *solver) open(ctx context.Context) (*session.Conn, func(), error) {
 	}
 	cleanup := func() { os.RemoveAll(tmp) }
 	env := []string{"PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "HOME=" + tmp, "TMPDIR=" + tmp}
-	conn, err := session.Spawn(ctx, s.path, nil, env, s.workDir)
+	conn, err := s.exec.Open(ctx, execution.SessionRequest{Program: s.path, Env: env, WorkDir: s.workDir})
 	if err != nil {
 		cleanup()
 		return nil, nil, err

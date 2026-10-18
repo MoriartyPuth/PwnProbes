@@ -18,11 +18,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/MoriartyPuth/PwnProbes/internal/detect"
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/inspect"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
@@ -51,11 +55,44 @@ type Report struct {
 	Binary      inspect.Report `json:"binary"`
 	Detection   detect.Report  `json:"detection"`
 	Pattern     string         `json:"pattern"`
+	Environment Environment    `json:"environment"`
 	Attempts    []Attempt      `json:"attempts"`
 	Solved      bool           `json:"solved"`
 	Flags       []string       `json:"flags"`
 	Winning     *Attempt       `json:"winning_attempt,omitempty"`
+	Timing      Timing         `json:"timing"`
 	Limitations []string       `json:"limitations"`
+}
+
+// Environment captures the run's provenance so a result can be reproduced and
+// compared: which build of the framework ran it, on what platform, against which
+// transport, and under what per-run budget. It is descriptive metadata, not a
+// claim about the target.
+type Environment struct {
+	Commit    string    `json:"commit,omitempty"`
+	GoVersion string    `json:"go_version"`
+	OS        string    `json:"os"`
+	Arch      string    `json:"arch"`
+	Mode      string    `json:"mode"` // "local" or "remote"
+	StartedAt time.Time `json:"started_at"`
+	TimeoutMS int64     `json:"timeout_ms"` // per-run deadline (the strategy budget)
+}
+
+// Timing records where wall-clock time went so expensive strategy ordering is
+// measurable rather than anecdotal. TotalMS is the whole run; Strategies lists
+// each strategy in the order it ran with its own elapsed time and the number of
+// attempts it recorded.
+type Timing struct {
+	TotalMS    int64            `json:"total_ms"`
+	Strategies []StrategyTiming `json:"strategies"`
+}
+
+// StrategyTiming is the wall-clock cost and attempt count of one strategy
+// invocation, in execution order.
+type StrategyTiming struct {
+	Name       string `json:"name"`
+	DurationMS int64  `json:"duration_ms"`
+	Attempts   int    `json:"attempts"`
 }
 
 // solver carries the shared inputs and the growing report across strategies.
@@ -67,6 +104,7 @@ type solver struct {
 	remote  string // host:port for a remote target; empty means a local subprocess
 	libc    string // explicit libc path for ret2libc; empty resolves the local one
 	report  *Report
+	exec    execution.Executor // how targets are run; defaults to execution.Native
 
 	lastOutcome string // outcome of the most recent recorded attempt
 }
@@ -78,10 +116,14 @@ type solver struct {
 // set (host:port) the exploit runs over a live TCP session; otherwise the target
 // runs as a local subprocess in its own directory so a flag file beside it is
 // readable.
-func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time.Duration) (Report, error) {
+func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time.Duration) (report Report, err error) {
+	start := time.Now()
+	// Stamp the total elapsed time on every return path, including early errors.
+	defer func() { report.Timing.TotalMS = time.Since(start).Milliseconds() }()
+
 	ex, err := extract.New(pattern)
 	if err != nil {
-		return Report{}, fmt.Errorf("compile flag pattern: %w", err)
+		return report, fmt.Errorf("compile flag pattern: %w", err)
 	}
 	effectivePattern := pattern
 	if effectivePattern == "" {
@@ -89,11 +131,24 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	}
 	binary, err := inspect.Analyze(path)
 	if err != nil {
-		return Report{}, err
+		return report, err
 	}
-	report := Report{
-		Binary:   binary,
-		Pattern:  effectivePattern,
+	mode := "local"
+	if remote != "" {
+		mode = "remote"
+	}
+	report = Report{
+		Binary:  binary,
+		Pattern: effectivePattern,
+		Environment: Environment{
+			Commit:    buildCommit(),
+			GoVersion: runtime.Version(),
+			OS:        runtime.GOOS,
+			Arch:      runtime.GOARCH,
+			Mode:      mode,
+			StartedAt: start.UTC(),
+			TimeoutMS: timeout.Milliseconds(),
+		},
 		Attempts: []Attempt{},
 		Flags:    []string{},
 		Limitations: []string{
@@ -103,22 +158,14 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			"failure to recover a flag does not prove the target is unexploitable",
 		},
 	}
-	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report}
+	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}}
 
 	if remote != "" {
 		report.Limitations = append(report.Limitations, "remote mode runs the session strategies (shellcode, ret2libc, overflow-to-shell); it assumes the local binary copy matches the remote, and ret2libc needs a matching libc (--libc)")
 		// Leak strategies first: they gate on protections and skip fast when not
 		// applicable. The overflow brute force is far more costly per attempt, so
 		// it runs last and only when the targeted strategies did not apply.
-		remoteStrategies := []func(context.Context) (bool, error){s.shellcodeStrategy, s.ret2libcStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.canaryStrategy, s.heapUAFStrategy, s.stackOverwriteSessionStrategy, s.partialOverwriteStrategy, s.ropPlannerStrategy}
-		for _, strat := range remoteStrategies {
-			if done, err := strat(ctx); err != nil {
-				return report, err
-			} else if done {
-				return report, nil
-			}
-		}
-		return report, nil
+		return s.runStrategies(ctx, s.remoteStrategies())
 	}
 
 	// Local mode: run the one-shot detection and strategies, then the session ones.
@@ -129,7 +176,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	report.Detection = detection
 
 	if hasFormatString(detection) {
-		if done, err := s.formatStringStrategy(ctx); err != nil {
+		if done, err := s.runStrategy(ctx, s.formatStrategy()); err != nil {
 			return report, err
 		} else if done {
 			return report, nil
@@ -142,22 +189,63 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := []func(context.Context) (bool, error){s.fmtGotOverwriteStrategy, s.fmtWriteRetStrategy, s.heapUAFStrategy, s.stackOverwriteStrategy, s.ropRet2winArgsStrategy, s.ropExecveStrategy, s.ret2pltStrategy, s.shellcodeStrategy, s.ret2libcStrategy, s.canaryStrategy, s.angrStrategy, s.partialOverwriteStrategy, s.ropPlannerStrategy}
-	for _, strat := range localStrategies {
-		if done, err := strat(ctx); err != nil {
-			return report, err
+	return s.runStrategies(ctx, s.localStrategies())
+}
+
+// runStrategies runs each strategy in order, stopping at the first that solves.
+// It is the single place local and remote modes converge on, so timing is
+// recorded uniformly.
+func (s *solver) runStrategies(ctx context.Context, strategies []Strategy) (Report, error) {
+	for _, st := range strategies {
+		if done, err := s.runStrategy(ctx, st); err != nil {
+			return *s.report, err
 		} else if done {
-			return report, nil
+			return *s.report, nil
 		}
 	}
-	return report, nil
+	return *s.report, nil
+}
+
+// runStrategy invokes one strategy and records its wall-clock cost and how many
+// attempts it added, in execution order. Timing is observed even when a strategy
+// skips fast (it still records a near-zero entry), so a report shows what ran.
+func (s *solver) runStrategy(ctx context.Context, st Strategy) (bool, error) {
+	before := len(s.report.Attempts)
+	start := time.Now()
+	done, err := st.Run(ctx)
+	s.report.Timing.Strategies = append(s.report.Timing.Strategies, StrategyTiming{
+		Name:       st.ID(),
+		DurationMS: time.Since(start).Milliseconds(),
+		Attempts:   len(s.report.Attempts) - before,
+	})
+	return done, err
+}
+
+// buildCommit reports the VCS revision this binary was built from, when the Go
+// toolchain embedded it (a plain `go build` of a checkout does). It can be
+// overridden with PWNPROBE_COMMIT for builds that strip VCS stamping. An empty
+// string means the revision is unknown, never a fabricated value.
+func buildCommit() string {
+	if c := os.Getenv("PWNPROBE_COMMIT"); c != "" {
+		return c
+	}
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, s := range info.Settings {
+		if s.Key == "vcs.revision" {
+			return s.Value
+		}
+	}
+	return ""
 }
 
 // attempt runs one payload, extracts flags, records the attempt, and, when a
 // non-echoed flag is recovered, finalizes the report as solved. It returns true
 // once the report is solved so the caller can stop.
 func (s *solver) attempt(ctx context.Context, strategy, note string, payload []byte, decodeLeak bool) (bool, error) {
-	result, err := runner.Run(ctx, runner.Request{Program: s.path, Input: payload, Timeout: s.timeout, WorkDir: s.workDir})
+	result, err := s.exec.Run(ctx, execution.Request{Program: s.path, Input: payload, Timeout: s.timeout, WorkDir: s.workDir})
 	if err != nil {
 		return false, err
 	}

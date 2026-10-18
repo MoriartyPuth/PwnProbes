@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/MoriartyPuth/PwnProbes/internal/runner"
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 )
 
 // angrTimeout bounds the symbolic-execution subprocess. It also caps the cost of
@@ -155,7 +155,7 @@ func (s *solver) angrStrategy(ctx context.Context) (bool, error) {
 	}
 
 	// Verify by replaying the concrete input; only a genuinely printed flag counts.
-	result, err := runner.Run(ctx, runner.Request{Program: s.path, Args: res.Argv, Input: stdin, Timeout: s.timeout, WorkDir: s.workDir})
+	result, err := s.exec.Run(ctx, execution.Request{Program: s.path, Args: res.Argv, Input: stdin, Timeout: s.timeout, WorkDir: s.workDir})
 	if err != nil {
 		// e.g. a 32-bit target this host cannot execute; a replay failure is a
 		// skip, not a solve error.

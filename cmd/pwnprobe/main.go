@@ -40,7 +40,7 @@ func main() {
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pwnprobe inspect|run|detect|solve|benchmark|version (use <command> -h)")
+		return errors.New("usage: pwnprobe inspect|run|detect|solve|strategies|benchmark|version (use <command> -h)")
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, version)
@@ -52,7 +52,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
 	var input, manifest, original, baseline, pattern, remote, libc *string
 	switch args[0] {
-	case "inspect", "detect":
+	case "inspect", "detect", "strategies":
 	case "run":
 		input = f.String("input", "", "read stdin bytes from a file; otherwise send EOF")
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
@@ -109,6 +109,19 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 		if report.Passed != report.Total {
 			return errors.New("benchmark expectations failed")
+		}
+		return nil
+	}
+	if args[0] == "strategies" {
+		if f.NArg() != 0 {
+			return errors.New("strategies lists the available strategies and takes no target")
+		}
+		catalog := solve.Catalog()
+		if *jsonMode {
+			return emit(catalog)
+		}
+		for _, st := range catalog {
+			fmt.Fprintf(out, "%-24s %s\n", st.ID, st.Description)
 		}
 		return nil
 	}
@@ -208,6 +221,12 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 		} else {
 			fmt.Fprintf(out, "pattern: %s\n", report.Pattern)
+			env := report.Environment
+			commit := env.Commit
+			if commit == "" {
+				commit = "unknown"
+			}
+			fmt.Fprintf(out, "env: commit=%s go=%s %s/%s mode=%s budget=%dms\n", commit, env.GoVersion, env.OS, env.Arch, env.Mode, env.TimeoutMS)
 			if report.Solved {
 				fmt.Fprintf(out, "SOLVED: recovered %v\n", report.Flags)
 				if report.Winning != nil {
@@ -218,6 +237,10 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			for _, a := range report.Attempts {
 				fmt.Fprintf(out, "  attempt %s: outcome=%s recovered=%v\n", a.Strategy, a.Result.Outcome, a.Recovered)
+			}
+			fmt.Fprintf(out, "timing: total=%dms\n", report.Timing.TotalMS)
+			for _, st := range report.Timing.Strategies {
+				fmt.Fprintf(out, "  %-24s %6dms  attempts=%d\n", st.Name, st.DurationMS, st.Attempts)
 			}
 			for _, limitation := range report.Limitations {
 				fmt.Fprintln(out, "Limitation:", limitation)
