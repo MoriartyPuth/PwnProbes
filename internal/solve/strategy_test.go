@@ -32,8 +32,9 @@ func TestCatalogIsCompleteAndDistinct(t *testing.T) {
 	// listing never drifts from what executes.
 	s := &solver{}
 	var runnable []Strategy
-	runnable = append(runnable, s.localStrategies()...)
-	runnable = append(runnable, s.remoteStrategies()...)
+	for _, st := range s.buildRegistry().all() {
+		runnable = append(runnable, st)
+	}
 	runnable = append(runnable, s.formatStrategy())
 	for _, st := range runnable {
 		if !ids[st.ID()] {
@@ -55,7 +56,7 @@ func TestCatalogIsCompleteAndDistinct(t *testing.T) {
 // TestLegacyStrategyWraps confirms the wrapper exposes identity and forwards Run.
 func TestLegacyStrategyWraps(t *testing.T) {
 	called := false
-	st := newLegacy("demo", "a demo strategy", func(context.Context) (bool, error) {
+	st := newLegacy("demo", "a demo strategy", nil, func(context.Context) (bool, error) {
 		called = true
 		return true, nil
 	})
