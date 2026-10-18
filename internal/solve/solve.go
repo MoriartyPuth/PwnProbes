@@ -61,6 +61,7 @@ type Report struct {
 	Flags       []string       `json:"flags"`
 	Winning     *Attempt       `json:"winning_attempt,omitempty"`
 	Timing      Timing         `json:"timing"`
+	Rejected    []Rejection    `json:"rejected_strategies,omitempty"`
 	Limitations []string       `json:"limitations"`
 }
 
@@ -159,13 +160,16 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		},
 	}
 	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}}
+	reg := s.buildRegistry()
 
 	if remote != "" {
 		report.Limitations = append(report.Limitations, "remote mode runs the session strategies (shellcode, ret2libc, overflow-to-shell); it assumes the local binary copy matches the remote, and ret2libc needs a matching libc (--libc)")
 		// Leak strategies first: they gate on protections and skip fast when not
 		// applicable. The overflow brute force is far more costly per attempt, so
 		// it runs last and only when the targeted strategies did not apply.
-		return s.runStrategies(ctx, s.remoteStrategies())
+		run, rejected := reg.eligible(ModeRemote)
+		report.Rejected = rejected
+		return s.runStrategies(ctx, run)
 	}
 
 	// Local mode: run the one-shot detection and strategies, then the session ones.
@@ -189,7 +193,9 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	return s.runStrategies(ctx, s.localStrategies())
+	run, rejected := reg.eligible(ModeLocal)
+	report.Rejected = rejected
+	return s.runStrategies(ctx, run)
 }
 
 // runStrategies runs each strategy in order, stopping at the first that solves.

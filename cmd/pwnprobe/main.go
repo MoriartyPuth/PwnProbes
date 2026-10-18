@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/MoriartyPuth/PwnProbes/internal/benchmark"
@@ -121,7 +122,11 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			return emit(catalog)
 		}
 		for _, st := range catalog {
-			fmt.Fprintf(out, "%-24s %s\n", st.ID, st.Description)
+			modes := make([]string, len(st.Modes))
+			for i, m := range st.Modes {
+				modes[i] = string(m)
+			}
+			fmt.Fprintf(out, "%-24s [%-13s] %s\n", st.ID, strings.Join(modes, ","), st.Description)
 		}
 		return nil
 	}
@@ -241,6 +246,9 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			fmt.Fprintf(out, "timing: total=%dms\n", report.Timing.TotalMS)
 			for _, st := range report.Timing.Strategies {
 				fmt.Fprintf(out, "  %-24s %6dms  attempts=%d\n", st.Name, st.DurationMS, st.Attempts)
+			}
+			for _, rej := range report.Rejected {
+				fmt.Fprintf(out, "rejected %-24s %s\n", rej.ID, rej.Reason)
 			}
 			for _, limitation := range report.Limitations {
 				fmt.Fprintln(out, "Limitation:", limitation)
