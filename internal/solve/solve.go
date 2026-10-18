@@ -165,18 +165,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		// Leak strategies first: they gate on protections and skip fast when not
 		// applicable. The overflow brute force is far more costly per attempt, so
 		// it runs last and only when the targeted strategies did not apply.
-		remoteStrategies := []strategyEntry{
-			{"shellcode", s.shellcodeStrategy},
-			{"ret2libc", s.ret2libcStrategy},
-			{"rop_execve", s.ropExecveStrategy},
-			{"ret2plt", s.ret2pltStrategy},
-			{"canary_ret2win", s.canaryStrategy},
-			{"heap_uaf", s.heapUAFStrategy},
-			{"stack_overwrite_session", s.stackOverwriteSessionStrategy},
-			{"partial_overwrite", s.partialOverwriteStrategy},
-			{"rop_planner", s.ropPlannerStrategy},
-		}
-		return s.runStrategies(ctx, remoteStrategies)
+		return s.runStrategies(ctx, s.remoteStrategies())
 	}
 
 	// Local mode: run the one-shot detection and strategies, then the session ones.
@@ -187,7 +176,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	report.Detection = detection
 
 	if hasFormatString(detection) {
-		if done, err := s.runStrategy(ctx, "format_string", s.formatStringStrategy); err != nil {
+		if done, err := s.runStrategy(ctx, s.formatStrategy()); err != nil {
 			return report, err
 		} else if done {
 			return report, nil
@@ -200,38 +189,15 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		report.Limitations = append(report.Limitations, "execution unsupported for this target; local exploitation strategies skipped")
 		return report, nil
 	}
-	localStrategies := []strategyEntry{
-		{"fmt_got_overwrite", s.fmtGotOverwriteStrategy},
-		{"fmt_write_ret", s.fmtWriteRetStrategy},
-		{"heap_uaf", s.heapUAFStrategy},
-		{"stack_overwrite", s.stackOverwriteStrategy},
-		{"rop_ret2win_args", s.ropRet2winArgsStrategy},
-		{"rop_execve", s.ropExecveStrategy},
-		{"ret2plt", s.ret2pltStrategy},
-		{"shellcode", s.shellcodeStrategy},
-		{"ret2libc", s.ret2libcStrategy},
-		{"canary_ret2win", s.canaryStrategy},
-		{"angr_logic", s.angrStrategy},
-		{"partial_overwrite", s.partialOverwriteStrategy},
-		{"rop_planner", s.ropPlannerStrategy},
-	}
-	return s.runStrategies(ctx, localStrategies)
+	return s.runStrategies(ctx, s.localStrategies())
 }
 
-// strategyEntry pairs a strategy's stable name with its invocation. Naming the
-// strategies (rather than keeping a bare func slice) is what lets the planner
-// record and later reason about per-strategy cost and ordering.
-type strategyEntry struct {
-	name string
-	run  func(context.Context) (bool, error)
-}
-
-// runStrategies runs each entry in order, stopping at the first that solves. It
-// is the single place local and remote modes converge on, so timing is recorded
-// uniformly.
-func (s *solver) runStrategies(ctx context.Context, entries []strategyEntry) (Report, error) {
-	for _, e := range entries {
-		if done, err := s.runStrategy(ctx, e.name, e.run); err != nil {
+// runStrategies runs each strategy in order, stopping at the first that solves.
+// It is the single place local and remote modes converge on, so timing is
+// recorded uniformly.
+func (s *solver) runStrategies(ctx context.Context, strategies []Strategy) (Report, error) {
+	for _, st := range strategies {
+		if done, err := s.runStrategy(ctx, st); err != nil {
 			return *s.report, err
 		} else if done {
 			return *s.report, nil
@@ -243,12 +209,12 @@ func (s *solver) runStrategies(ctx context.Context, entries []strategyEntry) (Re
 // runStrategy invokes one strategy and records its wall-clock cost and how many
 // attempts it added, in execution order. Timing is observed even when a strategy
 // skips fast (it still records a near-zero entry), so a report shows what ran.
-func (s *solver) runStrategy(ctx context.Context, name string, fn func(context.Context) (bool, error)) (bool, error) {
+func (s *solver) runStrategy(ctx context.Context, st Strategy) (bool, error) {
 	before := len(s.report.Attempts)
 	start := time.Now()
-	done, err := fn(ctx)
+	done, err := st.Run(ctx)
 	s.report.Timing.Strategies = append(s.report.Timing.Strategies, StrategyTiming{
-		Name:       name,
+		Name:       st.ID(),
 		DurationMS: time.Since(start).Milliseconds(),
 		Attempts:   len(s.report.Attempts) - before,
 	})

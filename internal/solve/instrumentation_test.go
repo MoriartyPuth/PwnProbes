@@ -11,10 +11,10 @@ func TestRunStrategyRecordsTiming(t *testing.T) {
 	rep := &Report{}
 	s := &solver{report: rep}
 
-	done, err := s.runStrategy(context.Background(), "alpha", func(context.Context) (bool, error) {
+	done, err := s.runStrategy(context.Background(), newLegacy("alpha", "", func(context.Context) (bool, error) {
 		s.report.Attempts = append(s.report.Attempts, Attempt{Strategy: "a1"})
 		return false, nil
-	})
+	}))
 	if err != nil {
 		t.Fatalf("alpha returned error: %v", err)
 	}
@@ -22,10 +22,10 @@ func TestRunStrategyRecordsTiming(t *testing.T) {
 		t.Fatal("alpha should not have solved")
 	}
 
-	done, err = s.runStrategy(context.Background(), "beta", func(context.Context) (bool, error) {
+	done, err = s.runStrategy(context.Background(), newLegacy("beta", "", func(context.Context) (bool, error) {
 		s.report.Attempts = append(s.report.Attempts, Attempt{Strategy: "b1"}, Attempt{Strategy: "b2"})
 		return true, nil
-	})
+	}))
 	if err != nil {
 		t.Fatalf("beta returned error: %v", err)
 	}
@@ -56,10 +56,10 @@ func TestRunStrategiesStopsAtFirstSolve(t *testing.T) {
 	rep := &Report{}
 	s := &solver{report: rep}
 	ran := []string{}
-	entries := []strategyEntry{
-		{"one", func(context.Context) (bool, error) { ran = append(ran, "one"); return false, nil }},
-		{"two", func(context.Context) (bool, error) { ran = append(ran, "two"); return true, nil }},
-		{"three", func(context.Context) (bool, error) { ran = append(ran, "three"); return false, nil }},
+	entries := []Strategy{
+		newLegacy("one", "", func(context.Context) (bool, error) { ran = append(ran, "one"); return false, nil }),
+		newLegacy("two", "", func(context.Context) (bool, error) { ran = append(ran, "two"); return true, nil }),
+		newLegacy("three", "", func(context.Context) (bool, error) { ran = append(ran, "three"); return false, nil }),
 	}
 	if _, err := s.runStrategies(context.Background(), entries); err != nil {
 		t.Fatalf("runStrategies error: %v", err)
