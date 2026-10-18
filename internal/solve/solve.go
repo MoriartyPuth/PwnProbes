@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/MoriartyPuth/PwnProbes/internal/detect"
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/inspect"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
@@ -103,6 +104,7 @@ type solver struct {
 	remote  string // host:port for a remote target; empty means a local subprocess
 	libc    string // explicit libc path for ret2libc; empty resolves the local one
 	report  *Report
+	exec    execution.Executor // how targets are run; defaults to execution.Native
 
 	lastOutcome string // outcome of the most recent recorded attempt
 }
@@ -156,7 +158,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			"failure to recover a flag does not prove the target is unexploitable",
 		},
 	}
-	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report}
+	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}}
 
 	if remote != "" {
 		report.Limitations = append(report.Limitations, "remote mode runs the session strategies (shellcode, ret2libc, overflow-to-shell); it assumes the local binary copy matches the remote, and ret2libc needs a matching libc (--libc)")
@@ -277,7 +279,7 @@ func buildCommit() string {
 // non-echoed flag is recovered, finalizes the report as solved. It returns true
 // once the report is solved so the caller can stop.
 func (s *solver) attempt(ctx context.Context, strategy, note string, payload []byte, decodeLeak bool) (bool, error) {
-	result, err := runner.Run(ctx, runner.Request{Program: s.path, Input: payload, Timeout: s.timeout, WorkDir: s.workDir})
+	result, err := s.exec.Run(ctx, execution.Request{Program: s.path, Input: payload, Timeout: s.timeout, WorkDir: s.workDir})
 	if err != nil {
 		return false, err
 	}

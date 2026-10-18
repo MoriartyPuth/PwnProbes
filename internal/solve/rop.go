@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/MoriartyPuth/PwnProbes/internal/runner"
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 )
 
 // maxRopAttempts bounds the two-argument ROP brute force.
@@ -81,7 +81,7 @@ func (s *solver) ropRet2winArgsStrategy(ctx context.Context) (bool, error) {
 				}
 				attempts++
 				probe := ropChain(pad, popRDI, sentinelRDI, popRSI, sentinelRSI, align, ret, fn)
-				result, runErr := runner.Run(ctx, runner.Request{Program: s.path, Input: probe, Timeout: s.timeout, WorkDir: s.workDir})
+				result, runErr := s.exec.Run(ctx, execution.Request{Program: s.path, Input: probe, Timeout: s.timeout, WorkDir: s.workDir})
 				if runErr != nil {
 					return false, runErr
 				}
