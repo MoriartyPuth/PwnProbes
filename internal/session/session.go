@@ -31,6 +31,7 @@ const MaxOutput = 1 << 20
 // when the connection's context is cancelled.
 type Conn struct {
 	ctx    context.Context
+	cancel context.CancelFunc
 	w      io.Writer
 	closer io.Closer
 
@@ -41,6 +42,7 @@ type Conn struct {
 	leftover []byte
 	received bytes.Buffer
 
+	wg        sync.WaitGroup
 	closeOnce sync.Once
 }
 
@@ -48,7 +50,13 @@ func newConn(ctx context.Context, r io.Reader, w io.Writer, closer io.Closer) *C
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	c := &Conn{ctx: ctx, w: w, closer: closer, chunks: make(chan []byte, 32)}
+	// Own a cancellable context derived from the caller's. Close() cancels it to
+	// unblock a pump that is parked on a channel send (not on the read), which
+	// closing the underlying I/O alone cannot interrupt. Cancelling the parent
+	// still propagates here, so existing deadline behavior is preserved.
+	cctx, cancel := context.WithCancel(ctx)
+	c := &Conn{ctx: cctx, cancel: cancel, w: w, closer: closer, chunks: make(chan []byte, 32)}
+	c.wg.Add(1)
 	go c.pump(r)
 	return c
 }
@@ -64,13 +72,21 @@ func (c *Conn) record(chunk []byte) {
 }
 
 func (c *Conn) pump(r io.Reader) {
+	defer c.wg.Done()
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			cp := make([]byte, n)
 			copy(cp, buf[:n])
-			c.chunks <- cp
+			// Observe cancellation while delivering: without this a full channel
+			// and a stalled consumer would park this goroutine forever, and
+			// Close could not reap it.
+			select {
+			case c.chunks <- cp:
+			case <-c.ctx.Done():
+				return
+			}
 		}
 		if err != nil {
 			c.mu.Lock()
@@ -179,13 +195,19 @@ func (c *Conn) RecvUntilIdle(idle time.Duration) []byte {
 // Received returns everything read from the target so far.
 func (c *Conn) Received() string { return c.received.String() }
 
-// Close releases the connection and, for a subprocess, terminates it.
+// Close releases the connection and, for a subprocess, terminates it. Shutdown
+// is bounded: it cancels the connection context (unblocking a pump parked on a
+// channel send), closes the owned I/O (unblocking a pump parked on a read), and
+// waits for the pump goroutine to exit before returning. Safe to call more than
+// once; only the first call acts.
 func (c *Conn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
+		c.cancel()
 		if c.closer != nil {
 			err = c.closer.Close()
 		}
+		c.wg.Wait()
 	})
 	return err
 }
