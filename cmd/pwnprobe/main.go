@@ -208,6 +208,12 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 		} else {
 			fmt.Fprintf(out, "pattern: %s\n", report.Pattern)
+			env := report.Environment
+			commit := env.Commit
+			if commit == "" {
+				commit = "unknown"
+			}
+			fmt.Fprintf(out, "env: commit=%s go=%s %s/%s mode=%s budget=%dms\n", commit, env.GoVersion, env.OS, env.Arch, env.Mode, env.TimeoutMS)
 			if report.Solved {
 				fmt.Fprintf(out, "SOLVED: recovered %v\n", report.Flags)
 				if report.Winning != nil {
@@ -218,6 +224,10 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			for _, a := range report.Attempts {
 				fmt.Fprintf(out, "  attempt %s: outcome=%s recovered=%v\n", a.Strategy, a.Result.Outcome, a.Recovered)
+			}
+			fmt.Fprintf(out, "timing: total=%dms\n", report.Timing.TotalMS)
+			for _, st := range report.Timing.Strategies {
+				fmt.Fprintf(out, "  %-24s %6dms  attempts=%d\n", st.Name, st.DurationMS, st.Attempts)
 			}
 			for _, limitation := range report.Limitations {
 				fmt.Fprintln(out, "Limitation:", limitation)
