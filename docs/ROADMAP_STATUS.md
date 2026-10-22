@@ -2,8 +2,10 @@
 
 Tracks progress implementing the PwnProbes hybrid-framework roadmap (a shared
 engine for auto / assisted / interactive binary-exploitation research while
-retaining the existing solver). The roadmap defines a 15-PR sequence; this file
-records what has landed and what is next.
+retaining the existing solver). The full source plan — goals, interface
+sketches, the 15-PR sequence, milestone gates, and acceptance criteria — is
+[`docs/HYBRID_FRAMEWORK_ROADMAP.md`](HYBRID_FRAMEWORK_ROADMAP.md). This file
+records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 

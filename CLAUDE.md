@@ -6,7 +6,8 @@ probes, and an automatic solver). It is authorized security-research / CTF
 tooling.
 
 This file orients a fresh session. For current roadmap progress, read
-[`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md).
+[`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md); for the full source plan, read
+[`docs/HYBRID_FRAMEWORK_ROADMAP.md`](docs/HYBRID_FRAMEWORK_ROADMAP.md).
 
 ## Build and test
 
