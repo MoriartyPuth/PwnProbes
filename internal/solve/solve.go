@@ -52,17 +52,26 @@ type Attempt struct {
 // Report is the full record of a solve run. Solved is true only when at least
 // one non-echoed flag matching the pattern was recovered.
 type Report struct {
-	Binary      inspect.Report `json:"binary"`
-	Detection   detect.Report  `json:"detection"`
-	Pattern     string         `json:"pattern"`
-	Environment Environment    `json:"environment"`
-	Attempts    []Attempt      `json:"attempts"`
-	Solved      bool           `json:"solved"`
-	Flags       []string       `json:"flags"`
-	Winning     *Attempt       `json:"winning_attempt,omitempty"`
-	Timing      Timing         `json:"timing"`
-	Rejected    []Rejection    `json:"rejected_strategies,omitempty"`
-	Limitations []string       `json:"limitations"`
+	Binary      inspect.Report    `json:"binary"`
+	Detection   detect.Report     `json:"detection"`
+	Pattern     string            `json:"pattern"`
+	Environment Environment       `json:"environment"`
+	Attempts    []Attempt         `json:"attempts"`
+	Solved      bool              `json:"solved"`
+	Flags       []string          `json:"flags"`
+	Winning     *Attempt          `json:"winning_attempt,omitempty"`
+	Timing      Timing            `json:"timing"`
+	Plan        []PlannedStrategy `json:"plan,omitempty"`
+	Rejected    []Rejection       `json:"rejected_strategies,omitempty"`
+	Limitations []string          `json:"limitations"`
+}
+
+// PlannedStrategy is one entry in the deterministic plan: the strategy's id, its
+// cost tier, and whether it was deferred behind cheaper strategies by ranking.
+type PlannedStrategy struct {
+	ID       string   `json:"id"`
+	Cost     CostTier `json:"cost"`
+	Deferred bool     `json:"deferred"`
 }
 
 // Environment captures the run's provenance so a result can be reproduced and
@@ -202,7 +211,23 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 // It is the single place local and remote modes converge on, so timing is
 // recorded uniformly.
 func (s *solver) runStrategies(ctx context.Context, strategies []Strategy) (Report, error) {
+	// Record the deterministic plan (ranked order) before running, so a report
+	// shows the intended sequence even if the run stops early on the deadline.
 	for _, st := range strategies {
+		s.report.Plan = append(s.report.Plan, PlannedStrategy{
+			ID:       st.ID(),
+			Cost:     st.Cost().Tier,
+			Deferred: st.Cost().Expensive,
+		})
+	}
+	for _, st := range strategies {
+		// Enforce the global deadline between strategies: once the budget is
+		// spent, stop rather than starting another strategy.
+		if err := ctx.Err(); err != nil {
+			s.report.Limitations = append(s.report.Limitations,
+				"global deadline reached; remaining strategies not attempted: "+remainingFrom(strategies, st.ID()))
+			return *s.report, nil
+		}
 		if done, err := s.runStrategy(ctx, st); err != nil {
 			return *s.report, err
 		} else if done {
@@ -210,6 +235,22 @@ func (s *solver) runStrategies(ctx context.Context, strategies []Strategy) (Repo
 		}
 	}
 	return *s.report, nil
+}
+
+// remainingFrom lists the strategy ids from id onward, for a clear limitation
+// message when the deadline cuts a run short.
+func remainingFrom(strategies []Strategy, id string) string {
+	var out []string
+	seen := false
+	for _, st := range strategies {
+		if st.ID() == id {
+			seen = true
+		}
+		if seen {
+			out = append(out, st.ID())
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // runStrategy invokes one strategy and records its wall-clock cost and how many

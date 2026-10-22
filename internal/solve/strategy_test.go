@@ -56,7 +56,7 @@ func TestCatalogIsCompleteAndDistinct(t *testing.T) {
 // TestLegacyStrategyWraps confirms the wrapper exposes identity and forwards Run.
 func TestLegacyStrategyWraps(t *testing.T) {
 	called := false
-	st := newLegacy("demo", "a demo strategy", nil, func(context.Context) (bool, error) {
+	st := newLegacy("demo", "a demo strategy", CostModerate, nil, func(context.Context) (bool, error) {
 		called = true
 		return true, nil
 	})
