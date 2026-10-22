@@ -1,18 +1,47 @@
 # PwnProbe architecture and roadmap
 
 This document describes how PwnProbe is structured today, why that structure has
-a ceiling, and how it would evolve to reach harder challenge classes (heap,
+a ceiling, and how it is evolving — into a shared engine for automatic, assisted,
+and interactive research, and toward harder challenge classes (heap,
 PIE-without-leak, logic/argv puzzles, and full-RELRO GOT).
 
-## Today: recipe-based strategies
+For the step-by-step status of the hybrid-framework refactor (which of the
+15 roadmap PRs have landed and what is next), see
+[`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md).
 
-The solver is a list of **strategies**, each a self-contained recipe:
+## The engine today
+
+PwnProbe is being reshaped from a hard-coded strategy list into a shared engine,
+without rewriting the existing techniques. The current shape:
+
+- **Strategy interface.** Every technique implements `Strategy`
+  (`ID`/`Description`/`Supports`/`Cost`/`Run`). The existing recipes are wrapped
+  unchanged behind this interface (`legacyStrategy`), so behavior is preserved
+  while the orchestration is lifted out.
+- **One registry.** A single `registry` holds every strategy and both local and
+  remote modes query it, replacing the former duplicated per-mode lists.
+  `Supports(mode)` returns a side-effect-free `SupportResult`, so the registry
+  does capability filtering and records *explained* rejections.
+- **Deterministic ranking.** `registry.eligible(mode)` ranks candidates: each
+  mode's order is kept, then expensive strategies (symbolic execution, cross-run
+  and session brute force) are stably deferred behind cheaper ones, and a global
+  deadline stops the run between strategies.
+- **Execution facade.** Strategies run through an `Executor`/`Session` interface
+  (`internal/execution`) over the subprocess and TCP transports, so the backend
+  can change (and later gain a sandbox) without touching strategy code.
+- **Instrumented reports.** Each solve records an environment block (commit, Go,
+  OS/arch, mode, budget), per-strategy timing, the ranked plan, and rejections.
+
+Each strategy is still a self-contained recipe internally:
 
 > recognize a shape → build a payload → brute one parameter → check the flag oracle
 
-`internal/solve` holds one file per family:
+`internal/solve` holds the engine files plus one file per technique family:
 
 - `solve.go` — the orchestrator and the shared `solver`/`Attempt`/`Report` types.
+- `strategy.go` — the `Strategy` interface, legacy wrappers, cost tiers, the
+  per-mode registry builder, and the static `Catalog` behind `pwnprobe strategies`.
+- `registry.go` — the registry, capability filtering, and deterministic ranking.
 - `overwrite.go` — variable overwrite and ret2win (immediate decoding, gadget and
   function scans, stack-aligning `ret`).
 - `rop.go` — two-argument ret2win ROP (`pop rdi`/`pop rsi`).
@@ -20,7 +49,10 @@ The solver is a list of **strategies**, each a self-contained recipe:
 - `leak.go` — shellcode-on-stack, ret2libc, and the session-based overflow.
 - `canary.go` — canary leak via format string, then overflow preserving it; also
   `orderedWinFunctions` (win-named first, CRT stubs dropped), shared with others.
-- `fmt_got.go` — format-string GOT overwrite with `%hhn`.
+- `fmt_got.go` / `fmt_writeret.go` — format-string GOT overwrite and write to a
+  saved return address.
+- `partial.go`, `ret2plt.go`, `heap.go`, `angr.go`, `rop_planner.go` — the
+  remaining technique families.
 
 Support packages:
 
@@ -28,6 +60,8 @@ Support packages:
   symbols, imports, libraries, SHA-256.
 - `internal/extract` — the echo-aware flag extractor (a match counts only when it
   is absent from the input that produced it) and little-endian leak reassembly.
+- `internal/execution` — the `Executor`/`Session` facade; `Native` delegates to
+  runner and session, and is where sandbox/container/SSH backends will plug in.
 - `internal/session` — one interactive transport for a local subprocess and a
   remote TCP service: `Send`, `RecvUntil`, and the prompt-agnostic
   `RecvUntilIdle`. This is what lets a leak be read and used in one connection.
@@ -37,12 +71,14 @@ Support packages:
 The oracle is uniform: a strategy wins only when a non-echoed flag matching the
 pattern appears in the transcript.
 
-### Why this has a ceiling
+### Why the recipe core still has a ceiling
 
-Each recipe hardcodes the whole path from vulnerability to flag. That is fine for
-"linear" challenges where one primitive plus a brute reaches the goal, but it
-cannot compose primitives, reason about program logic, or model a stateful
-allocator. The harder classes each need a missing capability, not another recipe.
+Even behind the engine, each recipe still hardcodes the whole path from
+vulnerability to flag inside `Run`. That is fine for "linear" challenges where
+one primitive plus a brute reaches the goal, but it cannot compose primitives,
+reason about program logic, or model a stateful allocator. The harder classes
+each need a missing capability, not another recipe — which is what the primitive
+and planner work below (roadmap PRs 7–10) is for.
 
 ## Target architecture: primitives and a planner
 
@@ -63,10 +99,16 @@ Interaction      session: menus, leak-then-respond
 Oracle           echo-guarded flag extraction
 ```
 
-Today the planner is a fixed list and primitives are implicit. The evolution is
-to make primitives first-class (discover and describe them) and add a planner
-that composes them toward a goal. Simple cases stay as direct recipes; hard cases
-use the planner or an external engine.
+The registry's capability filtering and deterministic cost ranking (above) are
+the first, deterministic step toward this planner — it chooses and orders
+strategies explicitly instead of relying on slice position. What is still
+implicit is the middle of the diagram: primitives and evidence. The next roadmap
+steps make those first-class — a central `TargetContext`, structured
+findings/observations that separate what was observed from what it means, shared
+`Knowledge` (libc, leaks, bases), and generalized verification (PRs 7–10) — then
+a scoring planner composes primitives toward a goal. Simple cases stay as direct
+recipes; hard cases use the planner or an external engine. See
+[`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md) for what has landed.
 
 ## The four hard classes
 
@@ -189,6 +231,8 @@ subset coverage; best treated as a long-term track.
   PIE, wrong class), the strategy skips and records a limitation; it never claims
   a solve from a crash.
 - **Bounded search.** Every brute force has an attempt cap and honours the context
-  deadline; session strategies order the cheap, targeted attempts first.
+  deadline. The registry ranks cheap, targeted strategies ahead of expensive
+  ones deterministically, and the orchestrator enforces the global deadline
+  between strategies so a costly fallback cannot starve the budget.
 - **Local analysis, remote action.** Static analysis uses a local copy; the
   session layer carries the exploit to a local or remote target.
