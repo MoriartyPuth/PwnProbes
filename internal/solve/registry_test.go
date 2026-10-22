@@ -22,21 +22,24 @@ func equalIDs(a, b []string) bool {
 	return true
 }
 
-// TestRegistryReproducesHistoricalOrder checks that the single registry yields
-// exactly the former hand-maintained local and remote sequences, so unifying the
-// two lists changed no behavior.
-func TestRegistryReproducesHistoricalOrder(t *testing.T) {
+// TestRegistryDeterministicRanking pins the ranked local and remote sequences:
+// the historical mode order with the expensive strategies (angr, cross-run and
+// session brute force) stably deferred behind the cheaper ones. Fixed inputs
+// must yield this exact order.
+func TestRegistryDeterministicRanking(t *testing.T) {
 	s := &solver{}
 	reg := s.buildRegistry()
 
 	wantLocal := []string{
 		"fmt_got_overwrite", "fmt_write_ret", "heap_uaf", "stack_overwrite",
 		"rop_ret2win_args", "rop_execve", "ret2plt", "shellcode", "ret2libc",
-		"canary_ret2win", "angr_logic", "partial_overwrite", "rop_planner",
+		"canary_ret2win", "rop_planner", // moderate rop_planner now precedes angr
+		"angr_logic", "partial_overwrite", // expensive, deferred to the end
 	}
 	wantRemote := []string{
 		"shellcode", "ret2libc", "rop_execve", "ret2plt", "canary_ret2win",
-		"heap_uaf", "stack_overwrite_session", "partial_overwrite", "rop_planner",
+		"heap_uaf", "rop_planner",
+		"stack_overwrite_session", "partial_overwrite", // expensive, deferred
 	}
 
 	gotLocal, _ := reg.eligible(ModeLocal)
@@ -47,6 +50,35 @@ func TestRegistryReproducesHistoricalOrder(t *testing.T) {
 	if got := ids(gotRemote); !equalIDs(got, wantRemote) {
 		t.Fatalf("remote order = %v, want %v", got, wantRemote)
 	}
+
+	// The documented fix: the ROP planner must run before expensive angr.
+	if indexOf(ids(gotLocal), "rop_planner") > indexOf(ids(gotLocal), "angr_logic") {
+		t.Fatal("rop_planner must be ranked before the expensive angr_logic")
+	}
+
+	// Every expensive strategy must come after every non-expensive one.
+	lastCheap, firstExpensive := -1, len(gotLocal)
+	for i, st := range gotLocal {
+		if st.Cost().Expensive {
+			if i < firstExpensive {
+				firstExpensive = i
+			}
+		} else {
+			lastCheap = i
+		}
+	}
+	if lastCheap > firstExpensive {
+		t.Fatalf("an expensive strategy was ranked before a cheaper one (lastCheap=%d firstExpensive=%d)", lastCheap, firstExpensive)
+	}
+}
+
+func indexOf(xs []string, want string) int {
+	for i, x := range xs {
+		if x == want {
+			return i
+		}
+	}
+	return -1
 }
 
 // TestRegistryRejectionsExplained checks that strategies excluded for a mode are

@@ -25,8 +25,12 @@ func (r *registry) register(st legacyStrategy) { r.strategies = append(r.strateg
 // all returns every registered strategy in registration order.
 func (r *registry) all() []legacyStrategy { return r.strategies }
 
-// eligible returns the strategies that support mode, in ascending run order, and
-// the strategies rejected for that mode with their reasons.
+// eligible returns the strategies that support mode, deterministically ranked,
+// and the strategies rejected for that mode with their reasons. Ranking is: keep
+// each mode's historical run order, then stably defer the expensive strategies
+// (symbolic execution, cross-run brute force) behind all cheaper ones, so a
+// strongly-supported cheap or moderate strategy is always tried before a costly
+// speculative fallback. The sort is stable, so fixed inputs yield a fixed order.
 func (r *registry) eligible(mode Mode) ([]Strategy, []Rejection) {
 	type ordered struct {
 		st    legacyStrategy
@@ -42,7 +46,12 @@ func (r *registry) eligible(mode Mode) ([]Strategy, []Rejection) {
 			rejected = append(rejected, Rejection{ID: st.ID(), Reason: sup.Reason})
 		}
 	}
+	// Primary key: non-expensive before expensive. Secondary: mode order. A
+	// stable sort preserves mode order within each cost group.
 	sort.SliceStable(sel, func(i, j int) bool { return sel[i].order < sel[j].order })
+	sort.SliceStable(sel, func(i, j int) bool {
+		return !sel[i].st.Cost().Expensive && sel[j].st.Cost().Expensive
+	})
 	run := make([]Strategy, len(sel))
 	for i, e := range sel {
 		run[i] = e.st

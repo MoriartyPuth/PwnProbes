@@ -126,7 +126,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			for i, m := range st.Modes {
 				modes[i] = string(m)
 			}
-			fmt.Fprintf(out, "%-24s [%-13s] %s\n", st.ID, strings.Join(modes, ","), st.Description)
+			fmt.Fprintf(out, "%-24s [%-13s] %-9s %s\n", st.ID, strings.Join(modes, ","), st.Cost, st.Description)
 		}
 		return nil
 	}
@@ -226,6 +226,16 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 		} else {
 			fmt.Fprintf(out, "pattern: %s\n", report.Pattern)
+			if len(report.Plan) > 0 {
+				planned := make([]string, len(report.Plan))
+				for i, p := range report.Plan {
+					planned[i] = p.ID
+					if p.Deferred {
+						planned[i] += "*"
+					}
+				}
+				fmt.Fprintf(out, "plan (* = deferred as expensive): %s\n", strings.Join(planned, " -> "))
+			}
 			env := report.Environment
 			commit := env.Commit
 			if commit == "" {
