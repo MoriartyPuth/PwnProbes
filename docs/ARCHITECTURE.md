@@ -101,14 +101,20 @@ Oracle           echo-guarded flag extraction
 
 The registry's capability filtering and deterministic cost ranking (above) are
 the first, deterministic step toward this planner — it chooses and orders
-strategies explicitly instead of relying on slice position. What is still
-implicit is the middle of the diagram: primitives and evidence. The next roadmap
-steps make those first-class — a central `TargetContext`, structured
-findings/observations that separate what was observed from what it means, shared
-`Knowledge` (libc, leaks, bases), and generalized verification (PRs 7–10) — then
-a scoring planner composes primitives toward a goal. Simple cases stay as direct
-recipes; hard cases use the planner or an external engine. See
-[`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md) for what has landed.
+strategies explicitly instead of relying on slice position. The evidence layer in
+the middle of the diagram is now first-class (PR 7): a central `TargetContext`
+holds the target's identity, capabilities, structured `Finding`/`Observation`
+evidence that separates what was observed from what it means (a crash stays an
+observation, never an overflow claim), and shared `Knowledge` (libc with
+provenance, stack/heap leaks) that strategies record once and reuse instead of
+rediscovering. Generalized verification has begun alongside it: a
+`VerificationStatus` ladder (observed → confirmed → primitive → exploitability →
+objective) and an `Objective`/`RecoverFlag` model, with the legacy `Solved` bool
+kept authoritative. Still implicit are explicit primitives (PR 8) and the
+plan/execute split (PR 9); then a scoring planner composes primitives toward a
+goal. Simple cases stay as direct recipes; hard cases use the planner or an
+external engine. See [`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md) for what has
+landed.
 
 ## The four hard classes
 

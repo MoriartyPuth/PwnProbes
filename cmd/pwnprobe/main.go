@@ -250,6 +250,18 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			} else {
 				fmt.Fprintln(out, "NOT SOLVED: no non-echoed flag recovered by the available strategies")
 			}
+			if report.Verification != nil {
+				fmt.Fprintf(out, "verification: objective=%s status=%s (%s)\n", report.Verification.Objective, report.Verification.Status, report.Verification.Detail)
+			}
+			if report.Context != nil {
+				for _, f := range report.Context.Findings {
+					line := fmt.Sprintf("finding %-14s status=%s source=%s", f.Kind, f.Status, f.Source)
+					if f.Interpretation != "" {
+						line += " interpretation=" + f.Interpretation
+					}
+					fmt.Fprintln(out, line)
+				}
+			}
 			for _, a := range report.Attempts {
 				fmt.Fprintf(out, "  attempt %s: outcome=%s recovered=%v\n", a.Strategy, a.Result.Outcome, a.Recovered)
 			}
