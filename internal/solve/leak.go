@@ -105,7 +105,14 @@ func (s *solver) liveAttempt(ctx context.Context, strategy string, build func(le
 	defer conn.Close()
 
 	pre := conn.RecvUntilIdle(s.idle())
-	payload, note, ok := build(parseLeaks(string(pre)))
+	leaks := parseLeaks(string(pre))
+	// Record observed pointer values in the shared Knowledge so later strategies
+	// can reuse them. This is a pure recording step and does not affect the
+	// payload this attempt builds.
+	if s.tc != nil {
+		s.tc.recordLeaks(leaks)
+	}
+	payload, note, ok := build(leaks)
 	if !ok {
 		return false, nil
 	}
@@ -255,7 +262,7 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 	if !okRDI {
 		return false, nil
 	}
-	sysOff, binshOff, ok := resolveLibc(s.path, s.libc)
+	sysOff, binshOff, ok := s.resolveLibcCached()
 	if !ok {
 		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped (for a remote target with a different libc, pass --libc)")
 		return false, nil
@@ -299,6 +306,34 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// resolveLibcCached resolves the libc system()/"/bin/sh" offsets once per run and
+// reuses the result, recording it in the shared Knowledge with provenance. The
+// resolution is identical to calling resolveLibc directly (same inputs, same
+// result), so behavior is preserved; the win is that the fact is now shared and
+// traceable instead of recomputed and discarded. With no shared context (direct
+// unit-test solvers) it falls back to a plain resolve.
+func (s *solver) resolveLibcCached() (sysOff, binshOff uint64, ok bool) {
+	if s.tc == nil {
+		return resolveLibc(s.path, s.libc)
+	}
+	if k := s.tc.Knowledge.Libc; k != nil {
+		return k.SystemOffset, k.BinshOffset, k.Resolved
+	}
+	sysOff, binshOff, ok = resolveLibc(s.path, s.libc)
+	source := "ldd"
+	if s.libc != "" {
+		source = "flag:--libc"
+	}
+	s.tc.Knowledge.Libc = &LibraryInfo{
+		Path:         s.libc, // empty means "the binary's own libc, via ldd"
+		Source:       source,
+		SystemOffset: sysOff,
+		BinshOffset:  binshOff,
+		Resolved:     ok,
+	}
+	return sysOff, binshOff, ok
 }
 
 // resolveLibc returns the file offset of system() and of a "/bin/sh" string in

@@ -63,7 +63,14 @@ type Report struct {
 	Timing      Timing            `json:"timing"`
 	Plan        []PlannedStrategy `json:"plan,omitempty"`
 	Rejected    []Rejection       `json:"rejected_strategies,omitempty"`
-	Limitations []string          `json:"limitations"`
+	// Context is the shared TargetContext for the run: target identity,
+	// capabilities, first-class findings (observations vs. interpretations), and
+	// accumulated Knowledge. Additive; the legacy fields above are unchanged.
+	Context *TargetContext `json:"context,omitempty"`
+	// Verification is the generalized objective result (begins roadmap §19/§20).
+	// Solved above stays authoritative; this grades progress toward RecoverFlag.
+	Verification *Verification `json:"verification,omitempty"`
+	Limitations  []string      `json:"limitations"`
 }
 
 // PlannedStrategy is one entry in the deterministic plan: the strategy's id, its
@@ -115,6 +122,7 @@ type solver struct {
 	libc    string // explicit libc path for ret2libc; empty resolves the local one
 	report  *Report
 	exec    execution.Executor // how targets are run; defaults to execution.Native
+	tc      *TargetContext     // shared state: identity, capabilities, findings, knowledge
 
 	lastOutcome string // outcome of the most recent recorded attempt
 }
@@ -128,8 +136,20 @@ type solver struct {
 // readable.
 func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time.Duration) (report Report, err error) {
 	start := time.Now()
-	// Stamp the total elapsed time on every return path, including early errors.
-	defer func() { report.Timing.TotalMS = time.Since(start).Milliseconds() }()
+	// tc is the shared state once static analysis has run. It is nil only on the
+	// earliest error paths (before the binary is analyzed).
+	var tc *TargetContext
+	// On every return path: stamp total elapsed time, attach the final shared
+	// context, and grade the run against the RecoverFlag objective. Solved stays
+	// authoritative; this is an additive, graded reading of the same result.
+	defer func() {
+		report.Timing.TotalMS = time.Since(start).Milliseconds()
+		if tc != nil {
+			report.Context = tc
+			v := RecoverFlag{}.Verify(outcomeFrom(&report, tc))
+			report.Verification = &v
+		}
+	}()
 
 	ex, err := extract.New(pattern)
 	if err != nil {
@@ -168,7 +188,8 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			"failure to recover a flag does not prove the target is unexploitable",
 		},
 	}
-	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}}
+	tc = newTargetContext(binary, path, mode, remote)
+	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}, tc: tc}
 	reg := s.buildRegistry()
 
 	if remote != "" {
@@ -187,6 +208,10 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		return report, err
 	}
 	report.Detection = detection
+	// Re-express the detector's findings in the first-class evidence model,
+	// preserving its honesty: a crash stays an observation, never an overflow
+	// claim. The detector itself is unchanged.
+	tc.Findings = append(tc.Findings, translateDetection(detection, time.Now())...)
 
 	if hasFormatString(detection) {
 		if done, err := s.runStrategy(ctx, s.formatStrategy()); err != nil {
@@ -331,6 +356,19 @@ func (s *solver) finalize(strategy, note string, payload []byte, result runner.R
 		s.report.Flags = recovered
 		winner := a
 		s.report.Winning = &winner
+		if s.tc != nil {
+			// A recovered non-echoed flag is the objective met: record it as a
+			// first-class finding at the top of the verification ladder, with the
+			// winning strategy as provenance.
+			s.tc.addFinding(Finding{
+				ID:         findingID(strategy, "flag", len(s.tc.Findings)),
+				Kind:       FindingFlag,
+				Status:     StatusObjectiveMet,
+				Confidence: 1.0,
+				Source:     strategy,
+				Evidence:   []Observation{{Type: "recovered_flags", Value: recovered, Timestamp: time.Now()}},
+			})
+		}
 		return true
 	}
 	return false
