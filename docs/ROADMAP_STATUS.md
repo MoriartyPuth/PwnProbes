@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (11 of 15), all merged into `main`
+## Done (12 of 15), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -24,6 +24,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 9 | `feat/plan-execute-separation` | Inspectable `Plan` (steps, cost, risk, requirements, produced primitives, feasibility) produced without executing the target. Selected deterministic strategies (`stack_overwrite`, `rop_ret2win_args`, `rop_execve`, `ret2plt`, `rop_planner`, `partial_overwrite`) describe their plan via a `planFn`; session/symbolic/heap strategies stay execution-only (`canPlan()==false`, shown in `strategies`). `Run` is unchanged — no solver rewrite. `solve --plan-only` and `PlanOnly` emit plans with zero attempts and no detection probe (pure planning does not execute). Additive `report.plans`, `StrategyInfo.plannable`. |
 | 10 | `feat/generalized-objectives` | Generalized verification: a run is graded against a standard objective set — `RecoverFlag`, `EstablishLeak`, `DemonstrateControl`, `DemonstrateWrite`, `SpawnShell` (+ `CustomPredicate`) — each mapping to the `VerificationStatus` ladder. Honest grading: a leak primitive ⇒ `EstablishLeak` met; a solve via a control/write/shell-class technique ⇒ the matching objective met; a crash reaches only `Observed`; nothing is promoted without a solve. `RecoverFlag`/`Solved` stay authoritative (`report.verification` mirrors `RecoverFlag`). Additive `report.objectives`. |
 | 11 | `feat/workspace-persistence` | `Workspace` model (schema `1.0`): target identity, capabilities, findings, primitives, knowledge, plans, attempts, objectives. `WorkspaceFromReport` + `Save`/`LoadWorkspace` round-trip JSON with major-version schema handling. `VerifyAgainst`/`VerifyPath` detect a changed binary/arch/bits on resume (stale addresses/plans flagged). `Redacted` strips remote endpoint, libc path, absolute paths. `SafeArtifactPath`/`checkArtifactName` bound artifact names to their directory. CLI: `solve --save[/--redact]`, `workspace [--verify <bin>]`. Additive. |
+| 12 | `feat/cli-analyze-plan-auto-assisted` | New commands over the same engine, compatibility preserved (`inspect`/`run`/`detect`/`solve`/`benchmark` unchanged): `analyze` (static recon + capabilities + candidate plans, no execution), `plan` (candidate plans, no execution), `auto` (alias for `solve` = auto + RecoverFlag), `assisted` (previews objective/execution-policy/plans and does **not** run the target without `--approve`; `--approve` executes via the same engine). All reuse `PlanOnly`/`Solve`. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -31,12 +32,12 @@ unchanged).
 
 ## Next
 
-- **PR 12 — analyze/plan/auto/assisted CLI.** A redesigned command surface over
-  the same engine: analyze (static), plan (no execution), auto (solve), assisted;
-  plan-only must not execute the target.
-- Then PRs 13–15: isolated execution backend; interactive frontend; release
-  hardening + benchmark comparison. See `docs/ARCHITECTURE.md` and the roadmap
-  document.
+- **PR 13 — supported isolated execution backend.** An execution backend that
+  enforces documented isolation policy (process-tree/resource limits), fails
+  explicitly on an unavailable control, and reports the backend and effective
+  policy.
+- Then PRs 14–15: interactive frontend; release hardening + benchmark comparison.
+  See `docs/ARCHITECTURE.md` and the roadmap document.
 
 ## Validation caveats
 
