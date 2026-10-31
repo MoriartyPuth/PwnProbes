@@ -41,7 +41,7 @@ func main() {
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pwnprobe inspect|run|detect|solve|strategies|benchmark|version (use <command> -h)")
+		return errors.New("usage: pwnprobe inspect|run|detect|solve|strategies|workspace|benchmark|version (use <command> -h)")
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, version)
@@ -51,10 +51,12 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	f.SetOutput(errOut)
 	jsonMode := f.Bool("json", false, "emit structured JSON")
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
-	var input, manifest, original, baseline, pattern, remote, libc *string
-	var planOnly *bool
+	var input, manifest, original, baseline, pattern, remote, libc, save, verify *string
+	var planOnly, redact *bool
 	switch args[0] {
 	case "inspect", "detect", "strategies":
+	case "workspace":
+		verify = f.String("verify", "", "path to the current binary to check the workspace's identity against")
 	case "run":
 		input = f.String("input", "", "read stdin bytes from a file; otherwise send EOF")
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
@@ -63,6 +65,8 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
 		libc = f.String("libc", "", "path to the target's libc for ret2libc offset resolution (for a remote libc that differs from this machine's)")
 		planOnly = f.Bool("plan-only", false, "show the candidate plans without executing the target")
+		save = f.String("save", "", "save the run as a workspace JSON file at this path")
+		redact = f.Bool("redact", false, "with --save, strip sensitive config (remote endpoint, libc path, absolute paths)")
 	case "benchmark":
 		manifest = f.String("manifest", "fixtures/manifest.json", "controlled fixture manifest")
 		original = f.String("original", "", "optional original pwnpasi.py for detection comparison")
@@ -144,6 +148,52 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	switch args[0] {
+	case "workspace":
+		w, err := solve.LoadWorkspace(path)
+		if err != nil {
+			return err
+		}
+		var vr *solve.VerifyResult
+		if *verify != "" {
+			binPath, aerr := filepath.Abs(*verify)
+			if aerr != nil {
+				return aerr
+			}
+			res, verr := w.VerifyPath(binPath)
+			if verr != nil {
+				return verr
+			}
+			vr = &res
+		}
+		if *jsonMode {
+			if vr != nil {
+				return emit(struct {
+					Workspace solve.Workspace    `json:"workspace"`
+					Verify    solve.VerifyResult `json:"verify"`
+				}{w, *vr})
+			}
+			return emit(w)
+		}
+		fmt.Fprintf(out, "workspace schema=%s saved=%s\n", w.Version, w.SavedAt.Format("2006-01-02T15:04:05Z"))
+		fmt.Fprintf(out, "target: %s sha256=%s %s %d-bit mode=%s\n", w.Target.Path, w.Target.SHA256, w.Target.Architecture, w.Target.Bits, w.Target.Mode)
+		fmt.Fprintf(out, "solved=%v flags=%v\n", w.Solved, w.Flags)
+		fmt.Fprintf(out, "findings=%d primitives=%d plans=%d attempts=%d objectives=%d\n", len(w.Findings), len(w.Primitives), len(w.Plans), len(w.Attempts), len(w.Objectives))
+		for _, obj := range w.Objectives {
+			if obj.Status != solve.StatusInconclusive {
+				fmt.Fprintf(out, "  objective %-20s %s\n", obj.Objective, obj.Status)
+			}
+		}
+		if vr != nil {
+			if vr.Match {
+				fmt.Fprintln(out, "identity: MATCH — the saved analysis still applies to this binary")
+			} else {
+				fmt.Fprintln(out, "identity: MISMATCH — saved addresses/plans may be invalid:")
+				for _, c := range vr.Changes {
+					fmt.Fprintln(out, "   -", c)
+				}
+			}
+		}
+		return nil
 	case "inspect":
 		report, err := inspect.Analyze(path)
 		if err != nil {
@@ -240,6 +290,16 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		report, err := solve.Solve(ctx, path, *pattern, *remote, *libc, *timeout)
 		if err != nil {
 			return err
+		}
+		if *save != "" {
+			w := solve.WorkspaceFromReport(&report)
+			if *redact {
+				w = w.Redacted()
+			}
+			if werr := w.Save(*save); werr != nil {
+				return fmt.Errorf("save workspace: %w", werr)
+			}
+			fmt.Fprintf(errOut, "workspace saved to %s\n", *save)
 		}
 		if *jsonMode {
 			if err = emit(report); err != nil {
