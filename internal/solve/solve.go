@@ -63,6 +63,10 @@ type Report struct {
 	Timing      Timing            `json:"timing"`
 	Plan        []PlannedStrategy `json:"plan,omitempty"`
 	Rejected    []Rejection       `json:"rejected_strategies,omitempty"`
+	// Plans are the inspectable per-strategy plans (roadmap §10) for the plannable
+	// strategies eligible in this mode, produced without executing the target.
+	// Distinct from Plan above, which is only the ranked id/cost order.
+	Plans []Plan `json:"plans,omitempty"`
 	// Context is the shared TargetContext for the run: target identity,
 	// capabilities, first-class findings (observations vs. interpretations), and
 	// accumulated Knowledge. Additive; the legacy fields above are unchanged.
@@ -203,6 +207,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		// it runs last and only when the targeted strategies did not apply.
 		run, rejected := reg.eligible(ModeRemote)
 		report.Rejected = rejected
+		report.Plans = s.collectPlans(ModeRemote, reg)
 		return s.runStrategies(ctx, run)
 	}
 
@@ -233,7 +238,47 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	}
 	run, rejected := reg.eligible(ModeLocal)
 	report.Rejected = rejected
+	report.Plans = s.collectPlans(ModeLocal, reg)
 	return s.runStrategies(ctx, run)
+}
+
+// PlanOnly builds the shared context and the candidate plans for a target
+// without executing it: no detection probe and no strategy Run, so nothing
+// touches the target (roadmap §28.2, "pure planning does not execute targets").
+// It backs `pwnprobe solve --plan-only` and the later `plan` command. remote
+// selects the mode whose eligible plannable strategies are reported.
+func PlanOnly(ctx context.Context, path, remote, libc string) (Report, error) {
+	binary, err := inspect.Analyze(path)
+	if err != nil {
+		return Report{}, err
+	}
+	mode := "local"
+	planMode := ModeLocal
+	if remote != "" {
+		mode, planMode = "remote", ModeRemote
+	}
+	report := Report{
+		Binary: binary,
+		Environment: Environment{
+			Commit:    buildCommit(),
+			GoVersion: runtime.Version(),
+			OS:        runtime.GOOS,
+			Arch:      runtime.GOARCH,
+			Mode:      mode,
+			StartedAt: time.Now().UTC(),
+		},
+		Attempts: []Attempt{},
+		Flags:    []string{},
+		Limitations: []string{
+			"plan-only: the target was not executed; plans show the strategies' intent and static preconditions, and execution verifies the rest",
+		},
+	}
+	tc := newTargetContext(binary, path, mode, remote)
+	s := &solver{path: path, workDir: filepath.Dir(path), remote: remote, libc: libc, report: &report, tc: tc}
+	reg := s.buildRegistry()
+	report.Plans = s.collectPlans(planMode, reg)
+	report.Context = tc
+	return report, nil
 }
 
 // runStrategies runs each strategy in order, stopping at the first that solves.

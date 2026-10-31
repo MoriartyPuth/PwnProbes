@@ -110,11 +110,17 @@ provenance, stack/heap leaks) that strategies record once and reuse instead of
 rediscovering. Generalized verification has begun alongside it: a
 `VerificationStatus` ladder (observed → confirmed → primitive → exploitability →
 objective) and an `Objective`/`RecoverFlag` model, with the legacy `Solved` bool
-kept authoritative. Still implicit are explicit primitives (PR 8) and the
-plan/execute split (PR 9); then a scoring planner composes primitives toward a
-goal. Simple cases stay as direct recipes; hard cases use the planner or an
-external engine. See [`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md) for what has
-landed.
+kept authoritative. Primitives are now explicit too (PR 8): the capability a
+vulnerability grants — leak/write/control/call, its domain, width, repeatability
+and constraints — is established from evidence and never overstated. And planning
+is separated from execution (PR 9): the selected deterministic strategies expose
+an inspectable `Plan` (steps, cost, risk, requirements, produced primitives)
+built without running the target, so `solve --plan-only` shows candidate plans
+with zero attempts while the existing `Run` path is untouched. Next, a scoring
+planner composes primitives toward a goal, and the objective/verification set
+grows beyond `RecoverFlag`. Simple cases stay as direct recipes; hard cases use
+the planner or an external engine. See
+[`docs/ROADMAP_STATUS.md`](ROADMAP_STATUS.md) for what has landed.
 
 ## The four hard classes
 
