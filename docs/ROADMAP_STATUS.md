@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (13 of 15), all merged into `main`
+## Done (14 of 15), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -26,6 +26,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 11 | `feat/workspace-persistence` | `Workspace` model (schema `1.0`): target identity, capabilities, findings, primitives, knowledge, plans, attempts, objectives. `WorkspaceFromReport` + `Save`/`LoadWorkspace` round-trip JSON with major-version schema handling. `VerifyAgainst`/`VerifyPath` detect a changed binary/arch/bits on resume (stale addresses/plans flagged). `Redacted` strips remote endpoint, libc path, absolute paths. `SafeArtifactPath`/`checkArtifactName` bound artifact names to their directory. CLI: `solve --save[/--redact]`, `workspace [--verify <bin>]`. Additive. |
 | 12 | `feat/cli-analyze-plan-auto-assisted` | New commands over the same engine, compatibility preserved (`inspect`/`run`/`detect`/`solve`/`benchmark` unchanged): `analyze` (static recon + capabilities + candidate plans, no execution), `plan` (candidate plans, no execution), `auto` (alias for `solve` = auto + RecoverFlag), `assisted` (previews objective/execution-policy/plans and does **not** run the target without `--approve`; `--approve` executes via the same engine). All reuse `PlanOnly`/`Solve`. |
 | 13 | `feat/execution-policy` | `ExecutionPolicy` + backend capability model (`internal/execution`): controls (timeout, output/input bounds, process-tree kill, scratch dirs, memory/cpu/process/network/filesystem). `Native` declares its honest enforced set (it is not a sandbox) and `ValidatePolicy` returns an explicit `UnsupportedPolicyError` for any isolation control it cannot provide — never silently degrading. Backend + effective policy surfaced in the report (`environment.backend`, `execution`). `solve --isolation sandbox|container` is rejected before running. Native stays the default; default policy validates cleanly (no behavior change). |
+| 14 | `feat/interactive-frontend` | `internal/repl`: an interactive shell over the same engine services (no strategy logic in handlers). Commands: `info`, `analyze`, `plans`, `plan <id>`, `strategies`, `solve`, `findings`, `primitives`, `objectives`, `knowledge [libc PATH]`, `save`, `open`/`resume`, `help`, `quit`. Injecting knowledge invalidates the current plans (re-analyze on next use). Reuses `PlanOnly`/`Solve`/`Workspace`; supports partial progress (objective evidence shown without a flag). Driven by an `Engine` interface, so it is unit-tested with a fake (no ELF, no execution). CLI: `pwnprobe interactive <target>`. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -33,12 +34,9 @@ unchanged).
 
 ## Next
 
-- **PR 14 — interactive frontend and reports.** A shell/REPL over the same
-  engine: resume a workspace, inject knowledge, inspect a plan, execute it, and
-  inspect objective evidence — reusing the analysis/plan/execute/workspace
-  services, not re-implementing them.
-- Then PR 15: release hardening + benchmark comparison. See
-  `docs/ARCHITECTURE.md` and the roadmap document.
+- **PR 15 — release hardening and benchmark comparison.** Publish compatibility
+  results, performance/coverage comparison, the security-boundary summary, and
+  extension guidance; set any numeric thresholds from reproduced measurements.
 
 ## Validation caveats
 

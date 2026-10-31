@@ -19,6 +19,7 @@ import (
 	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/inspect"
+	"github.com/MoriartyPuth/PwnProbes/internal/repl"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
 	"github.com/MoriartyPuth/PwnProbes/internal/solve"
 )
@@ -42,7 +43,7 @@ func main() {
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pwnprobe inspect|run|detect|analyze|plan|solve|auto|assisted|strategies|workspace|benchmark|version (use <command> -h)")
+		return errors.New("usage: pwnprobe inspect|run|detect|analyze|plan|solve|auto|assisted|interactive|strategies|workspace|benchmark|version (use <command> -h)")
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, version)
@@ -63,6 +64,9 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	case "inspect", "detect", "strategies":
 	case "analyze", "plan":
 		remote = f.String("remote", "", "select remote-mode plans (host:port); the path argument is a local copy for static analysis")
+	case "interactive":
+		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
+		libc = f.String("libc", "", "path to the target's libc for ret2libc offset resolution")
 	case "assisted":
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
 		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
@@ -164,6 +168,9 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	switch args[0] {
+	case "interactive":
+		eng := repl.NewEngine(path, *remote, *libc, *timeout)
+		return repl.Run(ctx, os.Stdin, out, eng)
 	case "analyze":
 		report, err := solve.PlanOnly(ctx, path, *remote, "")
 		if err != nil {
