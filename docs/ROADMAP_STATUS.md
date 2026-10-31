@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (14 of 15), all merged into `main`
+## Done (15 of 15) — roadmap complete, all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -27,6 +27,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 12 | `feat/cli-analyze-plan-auto-assisted` | New commands over the same engine, compatibility preserved (`inspect`/`run`/`detect`/`solve`/`benchmark` unchanged): `analyze` (static recon + capabilities + candidate plans, no execution), `plan` (candidate plans, no execution), `auto` (alias for `solve` = auto + RecoverFlag), `assisted` (previews objective/execution-policy/plans and does **not** run the target without `--approve`; `--approve` executes via the same engine). All reuse `PlanOnly`/`Solve`. |
 | 13 | `feat/execution-policy` | `ExecutionPolicy` + backend capability model (`internal/execution`): controls (timeout, output/input bounds, process-tree kill, scratch dirs, memory/cpu/process/network/filesystem). `Native` declares its honest enforced set (it is not a sandbox) and `ValidatePolicy` returns an explicit `UnsupportedPolicyError` for any isolation control it cannot provide — never silently degrading. Backend + effective policy surfaced in the report (`environment.backend`, `execution`). `solve --isolation sandbox|container` is rejected before running. Native stays the default; default policy validates cleanly (no behavior change). |
 | 14 | `feat/interactive-frontend` | `internal/repl`: an interactive shell over the same engine services (no strategy logic in handlers). Commands: `info`, `analyze`, `plans`, `plan <id>`, `strategies`, `solve`, `findings`, `primitives`, `objectives`, `knowledge [libc PATH]`, `save`, `open`/`resume`, `help`, `quit`. Injecting knowledge invalidates the current plans (re-analyze on next use). Reuses `PlanOnly`/`Solve`/`Workspace`; supports partial progress (objective evidence shown without a flag). Driven by an `Engine` interface, so it is unit-tested with a fake (no ELF, no execution). CLI: `pwnprobe interactive <target>`. |
+| 15 | `feat/release-hardening` | Release hardening + 1.0 gate: [`docs/RELEASE.md`](RELEASE.md) publishes the compatibility policy, the objective-verification contract, the security-boundary summary, and the extension guide, and points to the measured benchmark results in `PwnProbe-benchmarks/results/`. Version bumped to `1.0.0`. No engine behaviour change. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -34,9 +35,12 @@ unchanged).
 
 ## Next
 
-- **PR 15 — release hardening and benchmark comparison.** Publish compatibility
-  results, performance/coverage comparison, the security-boundary summary, and
-  extension guidance; set any numeric thresholds from reproduced measurements.
+The 15-PR hybrid-framework sequence is complete (0.5 → 1.0; see
+[`docs/RELEASE.md`](RELEASE.md)). Follow-on work remains optional and is not part
+of this sequence: a sandboxed/container execution backend, broader heap
+exploitation, general ROP expansion (write-what-where, `ret2csu`, stack pivot),
+additional architectures, and a richer terminal UI. See `docs/ARCHITECTURE.md`.
+
 
 ## Validation caveats
 
