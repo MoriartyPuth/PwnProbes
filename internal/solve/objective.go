@@ -1,20 +1,28 @@
 package solve
 
-// This file begins the generalized objective/verification model (roadmap §19,
-// §20). Today the solver's whole notion of success is a single Solved bool
-// meaning "a non-echoed flag was recovered". That is kept, verbatim, as the
-// authoritative signal; this adds a parallel, graded reading on top of it so a
-// result stays meaningful short of a full solve. Only RecoverFlag is implemented
-// now — it reproduces existing behavior — while the Objective interface and the
-// status ladder leave room for ReachFunction / SpawnShell / DemonstrateControl in
-// later PRs.
+// This file holds the generalized objective/verification model (roadmap §19,
+// §20). The solver's whole notion of success remains a single Solved bool
+// meaning "a non-echoed flag was recovered"; that is kept, verbatim, as the
+// authoritative signal. On top of it, a run is verified against a set of
+// objectives (RecoverFlag plus EstablishLeak / DemonstrateControl /
+// DemonstrateWrite / SpawnShell; see objectives.go), so a result stays
+// meaningful short of a full solve and distinguishes observation, confirmation,
+// primitive, and objective success. Grading is honest: a crash reaches only
+// Observed, and an objective is met only on evidence that actually demonstrates
+// it (an established primitive, or a solve via a technique of the right class).
 
-// Outcome is what an objective inspects: the flags a run recovered and the
-// strongest verification status any finding reached. It is a projection of the
-// finished report, not new state.
+// Outcome is what an objective inspects: a read-only projection of the finished
+// run. It carries the recovered flags, whether the run solved, the winning
+// strategy (so an objective can tell which capability a solve demonstrated), the
+// established primitives, the findings, and the strongest status any finding
+// reached. It is a projection of the finished report, not new state.
 type Outcome struct {
-	Flags         []string
-	HighestStatus VerificationStatus
+	Flags           []string
+	Solved          bool
+	WinningStrategy string
+	Primitives      []Primitive
+	Findings        []Finding
+	HighestStatus   VerificationStatus
 }
 
 // Verification is an objective's graded result: how far the run got toward that
@@ -69,20 +77,35 @@ func (o RecoverFlag) Verify(out Outcome) Verification {
 }
 
 // outcomeFrom projects a finished report and its shared context into an Outcome:
-// the recovered flags (Solved stays authoritative) and the strongest finding
-// status reached.
+// the recovered flags (Solved stays authoritative), the winning strategy, the
+// established primitives and findings, and the strongest finding status reached.
 func outcomeFrom(report *Report, tc *TargetContext) Outcome {
 	highest := StatusInconclusive
+	var prims []Primitive
+	var finds []Finding
 	if tc != nil {
 		for _, f := range tc.Findings {
 			if StatusRank(f.Status) > StatusRank(highest) {
 				highest = f.Status
 			}
 		}
+		prims = tc.Primitives
+		finds = tc.Findings
 	}
 	var flags []string
+	var winning string
 	if report.Solved {
 		flags = report.Flags
+		if report.Winning != nil {
+			winning = report.Winning.Strategy
+		}
 	}
-	return Outcome{Flags: flags, HighestStatus: highest}
+	return Outcome{
+		Flags:           flags,
+		Solved:          report.Solved,
+		WinningStrategy: winning,
+		Primitives:      prims,
+		Findings:        finds,
+		HighestStatus:   highest,
+	}
 }
