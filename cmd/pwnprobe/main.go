@@ -275,6 +275,14 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			if report.Verification != nil {
 				fmt.Fprintf(out, "verification: objective=%s status=%s (%s)\n", report.Verification.Objective, report.Verification.Status, report.Verification.Detail)
 			}
+			for _, obj := range report.Objectives {
+				// RecoverFlag is already shown on the verification line above; list
+				// the other objectives that reached a rung beyond inconclusive.
+				if obj.Objective == "recover_flag" || obj.Status == solve.StatusInconclusive {
+					continue
+				}
+				fmt.Fprintf(out, "objective %-20s %s\n", obj.Objective, obj.Status)
+			}
 			if report.Context != nil {
 				for _, f := range report.Context.Findings {
 					line := fmt.Sprintf("finding %-14s status=%s source=%s", f.Kind, f.Status, f.Source)

@@ -71,10 +71,15 @@ type Report struct {
 	// capabilities, first-class findings (observations vs. interpretations), and
 	// accumulated Knowledge. Additive; the legacy fields above are unchanged.
 	Context *TargetContext `json:"context,omitempty"`
-	// Verification is the generalized objective result (begins roadmap §19/§20).
-	// Solved above stays authoritative; this grades progress toward RecoverFlag.
+	// Verification is the RecoverFlag objective result, kept for compatibility.
+	// Solved above stays authoritative; this grades progress toward the flag.
 	Verification *Verification `json:"verification,omitempty"`
-	Limitations  []string      `json:"limitations"`
+	// Objectives is the full generalized verification (roadmap §19/§20): the run
+	// graded against every standard objective (RecoverFlag first), so partial
+	// outcomes — a leak, a demonstrated write/control, a spawned shell — are
+	// reported even when no flag was recovered.
+	Objectives  []Verification `json:"objectives,omitempty"`
+	Limitations []string       `json:"limitations"`
 }
 
 // PlannedStrategy is one entry in the deterministic plan: the strategy's id, its
@@ -154,8 +159,13 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			// the strategies have recorded everything.
 			tc.establishPrimitives()
 			report.Context = tc
-			v := RecoverFlag{}.Verify(outcomeFrom(&report, tc))
-			report.Verification = &v
+			// Verify against the full standard objective set. RecoverFlag is first
+			// and is mirrored into Verification, so Solved and the legacy
+			// verification field keep their exact meaning.
+			out := outcomeFrom(&report, tc)
+			report.Objectives = EvaluateObjectives(out)
+			rf := report.Objectives[0]
+			report.Verification = &rf
 		}
 	}()
 
