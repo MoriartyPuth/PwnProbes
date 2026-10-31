@@ -37,8 +37,17 @@ the separate [evaluation repository](#evaluation-suite).
 pwnprobe inspect --json ./target
 pwnprobe run --timeout 1s --input ./input.txt --json ./target
 pwnprobe detect --timeout 1s --json ./target
+pwnprobe analyze ./target                       # static recon + candidate plans, no execution
+pwnprobe plan ./target                          # candidate plans only, no execution
 pwnprobe solve --timeout 2s --flag-pattern 'flag\{[^}]+\}' --json ./target
+pwnprobe solve --plan-only ./target             # show plans, do not execute
+pwnprobe auto ./target                          # alias for solve (auto + RecoverFlag)
+pwnprobe assisted ./target                      # preview the plan; add --approve to execute
+pwnprobe solve --save challenge.pwnprobe.json ./target   # persist the run as a workspace
+pwnprobe workspace --verify ./target challenge.pwnprobe.json  # resume + identity check
+pwnprobe interactive ./target                   # REPL over the engine
 pwnprobe solve --remote host:1337 --flag-pattern 'flag\{[^}]+\}' ./local_copy
+pwnprobe strategies
 pwnprobe version
 ```
 
@@ -70,6 +79,54 @@ Use `./bin/pwnprobe` if the binary is not on PATH. Flags precede the target path
 
 Inspection works on Windows and Linux. Execution and detection require Linux; use the Linux build inside WSL on Windows. Probes support x86/x64 executables where the OS provides the necessary loader and libraries.
 
+## Engine model: analyze, plan, verify, persist
+
+The solver, the CLI commands, and the interactive shell all drive one engine, so
+analysis, planning, execution, verification, and persistence behave identically
+through each.
+
+- **Analyze and plan without executing.** `analyze` reports the binary's identity
+  and capabilities and the candidate plans; `plan` (and `solve --plan-only`)
+  reports just the plans. A plan carries ordered steps, a cost tier, a risk
+  level, its static requirements (each shown met or unmet), the primitives it
+  would produce, and whether it is feasible — produced from static analysis only.
+  Pure planning never runs the target, so an infeasible strategy is explained
+  rather than silently spending attempts. The deterministic strategies expose
+  plans; session/symbolic/heap strategies remain execution-only (shown as
+  `exec-only` by `strategies`).
+- **Evidence, primitives, and knowledge.** A run records structured findings that
+  separate what was observed from what it means — a crash is an `observed`
+  observation, never an "overflow confirmed" — and the capabilities a
+  vulnerability grants as explicit primitives (leak/write/control/call, with
+  domain, width, repeatability, and references to the evidence that established
+  them). Shared knowledge (an identified libc with provenance, disclosed
+  stack/heap leaks) is recorded once and reused rather than rediscovered.
+- **Generalized verification.** Besides the authoritative `recover_flag`
+  objective (which is exactly `Solved`), each run is graded against a standard
+  set — `establish_leak`, `demonstrate_control`, `demonstrate_write`,
+  `spawn_shell` — on a ladder (`observed` → `confirmed` → `primitive_established`
+  → `exploitability_established` → `objective_met`). A status is only as strong
+  as its evidence, so partial progress (a leak, a demonstrated write) is reported
+  even when no flag is recovered. See [`docs/RELEASE.md`](docs/RELEASE.md) for the
+  full verification contract.
+- **Assisted and interactive.** `assisted` previews the objective, execution
+  policy, and candidate plans and does **not** run the target without `--approve`;
+  approving executes through the same engine. `interactive` is a REPL
+  (`info`, `analyze`, `plans`, `plan <id>`, `solve`, `findings`, `primitives`,
+  `objectives`, `knowledge libc PATH`, `save`, `open`, …); injecting knowledge
+  invalidates the current plans instead of reusing stale ones.
+- **Workspaces.** `solve --save FILE` persists a run (target identity,
+  capabilities, findings, primitives, knowledge, plans, attempts, objectives) as
+  versioned JSON; `workspace FILE` summarizes it and `--verify ./binary` checks
+  that the saved analysis still applies (a changed binary, architecture, or bit
+  width is flagged, since saved addresses and plans do not transfer). `--redact`
+  strips the remote endpoint, libc path, and absolute paths for an exported copy.
+- **Execution policy.** The report names the backend that ran the target and the
+  policy it enforces. Native execution is honest about its limits (see *Execution
+  limits*): `solve --isolation sandbox|container` is **rejected explicitly**
+  because the native backend cannot enforce it, rather than running with weaker
+  isolation than requested.
+
 ## What it reports
 
 - ELF architecture, entry point, imports, functions, libraries, and SHA-256 fingerprint.
@@ -85,9 +142,9 @@ Missing canary evidence is reported as unknown. Stack-check symbol presence does
 
 The runner uses disposable working directories, a sanitized environment, process-group cleanup, a per-run deadline, a 1 MiB input limit, and a 1 MiB capture limit per output stream. Maximum per-run timeout is one minute.
 
-The runner is not a security sandbox. It does not restrict filesystem/network access, memory, CPU, or process count. Use trusted lab programs or run the entire tool in a restricted VM/container. Descendants that escape their process group are outside its cleanup guarantees. Static ELF size guards are not a security boundary for hostile parser inputs.
+The native backend is not a security sandbox. It does not restrict filesystem/network access, memory, CPU, or process count, and it declares as much: a policy requesting any of those controls, or `--isolation sandbox|container`, is rejected with an explicit unsupported-policy error rather than run with weaker isolation than asked for. Use trusted lab programs or run the entire tool in a restricted VM/container; a sandboxed backend is planned (roadmap §30, PR 19). Descendants that escape their process group are outside its cleanup guarantees. Static ELF size guards are not a security boundary for hostile parser inputs. Target output and imported workspace data are treated as untrusted data, and workspace artifact references cannot escape the workspace directory.
 
-Probes handle one stdin interaction ending in EOF. Interactive menus, remote transports, gadget analysis, and exploitation strategies are not implemented yet. Files can change between inspection and execution.
+The one-shot `detect`/`run` probes handle a single stdin interaction ending in EOF; interactive menus and remote targets are driven by the session layer and the solver strategies instead. Files can change between inspection and execution; a saved workspace records the binary's hash so a later resume detects a changed target.
 
 ## Benchmark engine
 
@@ -103,10 +160,29 @@ Test code, fixtures, adapters, reports, and compiled binaries are excluded from 
 
 ## Evaluation suite
 
-The end-to-end solve suite — challenge sources, build recipes, a manifest, expected outcomes, and comparison results — lives in a separate repository so the tool can be cloned on its own: [**MoriartyPuth/PwnProbe-benchmarks**](https://github.com/MoriartyPuth/PwnProbe-benchmarks). It builds each lab, runs `pwnprobe solve`, and checks that the recovered flag matches, with results recorded against a specific PwnProbe commit. The latest recorded run solved **18/18 labs — covering every solve strategy — against commit `36acdbc`** on Ubuntu 24.04 / glibc 2.39; see [`results/36acdbc.md`](https://github.com/MoriartyPuth/PwnProbe-benchmarks/blob/main/results/36acdbc.md). PwnProbe is also checked against the real third-party ROP Emporium binaries (`ret2win`, `split`, `callme` — all solved) in [`results/real-world-ropemporium.md`](https://github.com/MoriartyPuth/PwnProbe-benchmarks/blob/main/results/real-world-ropemporium.md). That repository also carries a `detect-manifest.json` for the detection `benchmark` command above. Small unit tests (parsing, payload serialization, cancellation, flag extraction) stay alongside the code here; the labs do not.
+The end-to-end solve suite — challenge sources, build recipes, a manifest, expected outcomes, and comparison results — lives in a separate repository so the tool can be cloned on its own: [**MoriartyPuth/PwnProbe-benchmarks**](https://github.com/MoriartyPuth/PwnProbe-benchmarks). It builds each lab, runs `pwnprobe solve`, and checks that the recovered flag matches, with results recorded per PwnProbe commit under `results/<commit>.{json,md}`, each tagged with the OS, glibc, and gcc of the run. The historical baseline solved **18/18 labs — covering every solve strategy — against commit `36acdbc`** on Ubuntu 24.04 / glibc 2.39; see [`results/36acdbc.md`](https://github.com/MoriartyPuth/PwnProbe-benchmarks/blob/main/results/36acdbc.md). The hybrid-framework work is behaviour-preserving, so coverage is unchanged; recent runs on a modern toolchain (Fedora 44 / glibc 2.43 / gcc 16) record **16/18**, the two misses being environment-only — `lab07_ret2libc` under the newer glibc and `lab11_ret2syscall` needing a static libc — not solver regressions. PwnProbe is also checked against the real third-party ROP Emporium binaries (`ret2win`, `split`, `callme` — all solved) in [`results/real-world-ropemporium.md`](https://github.com/MoriartyPuth/PwnProbe-benchmarks/blob/main/results/real-world-ropemporium.md). That repository also carries a `detect-manifest.json` for the detection `benchmark` command above. Small unit tests (parsing, payload serialization, cancellation, flag extraction) stay alongside the code here; the labs do not.
 
 ## Roadmap
 
-Shipped since 0.1.0: flag extraction, the solver strategies listed above — including PIE-without-a-leak (partial overwrite), logic/argv/stdin puzzles via symbolic execution, and menu-driven heap use-after-free (prompt-driven, size-prompted and index-driven menus, since 0.5.0) — and interactive local/remote sessions. Planned: broader heap exploitation (tcache poisoning, libc-hook overwrites), full-RELRO libc-hook writes, a restricted execution backend, debugger evidence for crash classification, and a held-out challenge evaluation set. See `docs/ARCHITECTURE.md` for the design behind these.
+Shipped through 1.0: the solver strategies listed above, and the hybrid-framework
+engine built across a 15-PR sequence — a shared strategy registry with
+deterministic ranking; a central `TargetContext` with first-class evidence,
+explicit primitives, and shared knowledge; generalized objectives and a
+verification ladder; inspectable plans separated from execution; workspace
+persistence with identity checks; an execution-policy model; and the
+`analyze`/`plan`/`auto`/`assisted`/`interactive` commands over one engine. The
+compatibility policy, verification contract, security boundaries, and extension
+guide are in [`docs/RELEASE.md`](docs/RELEASE.md); the full design is in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and the per-PR history in
+[`docs/ROADMAP_STATUS.md`](docs/ROADMAP_STATUS.md).
+
+Planned next (post-1.0, roadmap §30, PRs 16–20): resolve plans from real static
+analysis and finish the plan/execute split; a scoring planner that **composes
+primitives** across strategies toward an objective; objectives graded from those
+primitives; a supported isolated (sandboxed) execution backend; and robust libc
+fingerprinting plus a held-out generalization benchmark. Breadth work — broader
+heap exploitation (tcache poisoning, libc-hook overwrites), general ROP expansion
+(`write4`/`ret2csu`/stack pivot), more architectures, and a richer TUI — remains
+optional follow-on.
 
 The project is an independent Go rebuild inspired by [PwnPasi](https://github.com/heimao-box/pwnpasi). Licensed under MIT.
