@@ -41,20 +41,34 @@ func main() {
 }
 func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: pwnprobe inspect|run|detect|solve|strategies|workspace|benchmark|version (use <command> -h)")
+		return errors.New("usage: pwnprobe inspect|run|detect|analyze|plan|solve|auto|assisted|strategies|workspace|benchmark|version (use <command> -h)")
 	}
 	if args[0] == "version" {
 		fmt.Fprintln(out, version)
 		return nil
+	}
+	// `auto` is the roadmap's name for a full solve (auto + RecoverFlag); it is a
+	// pure alias so it shares solve's flags, engine, and output exactly.
+	if args[0] == "auto" {
+		args[0] = "solve"
 	}
 	f := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	f.SetOutput(errOut)
 	jsonMode := f.Bool("json", false, "emit structured JSON")
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
 	var input, manifest, original, baseline, pattern, remote, libc, save, verify *string
-	var planOnly, redact *bool
+	var planOnly, redact, approve *bool
 	switch args[0] {
 	case "inspect", "detect", "strategies":
+	case "analyze", "plan":
+		remote = f.String("remote", "", "select remote-mode plans (host:port); the path argument is a local copy for static analysis")
+	case "assisted":
+		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
+		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
+		libc = f.String("libc", "", "path to the target's libc for ret2libc offset resolution")
+		save = f.String("save", "", "on --approve, save the run as a workspace JSON file at this path")
+		redact = f.Bool("redact", false, "with --save, strip sensitive config")
+		approve = f.Bool("approve", false, "execute the plan; without it, assisted only previews and does not run the target")
 	case "workspace":
 		verify = f.String("verify", "", "path to the current binary to check the workspace's identity against")
 	case "run":
@@ -148,6 +162,69 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	switch args[0] {
+	case "analyze":
+		report, err := solve.PlanOnly(ctx, path, *remote, "")
+		if err != nil {
+			return err
+		}
+		if *jsonMode {
+			return emit(report)
+		}
+		b := report.Binary
+		fmt.Fprintf(out, "analyze %s: %s %d-bit %s\nSHA256: %s\n", b.Path, b.Architecture, b.Bits, b.Type, b.SHA256)
+		if report.Context != nil {
+			c := report.Context.Capabilities
+			fmt.Fprintf(out, "capabilities: nx=%v pie=%v canary=%v full_relro=%v exec_supported=%v\n", c.NX, c.PIE, c.Canary, c.FullRELRO, c.ExecutionSupported)
+		}
+		fmt.Fprintf(out, "%d candidate plan(s) for %s mode (target not executed):\n", len(report.Plans), report.Environment.Mode)
+		printPlans(out, report.Plans)
+		for _, l := range report.Limitations {
+			fmt.Fprintln(out, "Limitation:", l)
+		}
+		return nil
+	case "plan":
+		report, err := solve.PlanOnly(ctx, path, *remote, "")
+		if err != nil {
+			return err
+		}
+		if *jsonMode {
+			return emit(report)
+		}
+		fmt.Fprintf(out, "%d candidate plan(s) for %s mode (target not executed):\n", len(report.Plans), report.Environment.Mode)
+		printPlans(out, report.Plans)
+		return nil
+	case "assisted":
+		prev, err := solve.PlanOnly(ctx, path, *remote, *libc)
+		if err != nil {
+			return err
+		}
+		if !*approve {
+			if *jsonMode {
+				return emit(prev)
+			}
+			fmt.Fprintln(out, "assisted mode — review before executing (nothing has run):")
+			fmt.Fprintln(out, "objective: recover_flag (standard set also graded: leak/control/write/shell)")
+			fmt.Fprintf(out, "execution policy: native %s execution\n", prev.Environment.Mode)
+			printPlans(out, prev.Plans)
+			for _, l := range prev.Limitations {
+				fmt.Fprintln(out, "Limitation:", l)
+			}
+			fmt.Fprintln(out, "re-run with --approve to execute via the engine.")
+			return nil
+		}
+		// Approved: run the same engine as `solve`, by re-dispatching with the
+		// --approve flag removed so solve's flag set parses cleanly.
+		var solveArgs []string
+		for _, a := range args {
+			switch a {
+			case "--approve", "-approve", "--approve=true", "-approve=true":
+				continue
+			}
+			solveArgs = append(solveArgs, a)
+		}
+		solveArgs[0] = "solve"
+		fmt.Fprintln(errOut, "assisted: approved — executing via the engine.")
+		return execute(ctx, solveArgs, out, errOut)
 	case "workspace":
 		w, err := solve.LoadWorkspace(path)
 		if err != nil {
