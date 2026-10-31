@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (8 of 15), all merged into `main`
+## Done (9 of 15), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -21,6 +21,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 6 | `feat/planner-ranking` | `CostEstimate` + `Cost()`; `registry.eligible` ranks deterministically — historical mode order kept, expensive strategies (angr, cross-run/session brute force) stably deferred, so `rop_planner` precedes `angr`. Global deadline enforced between strategies; report `plan`; cost tiers in `strategies`. |
 | 7 | `feat/target-context-evidence-knowledge` | Central `TargetContext` (`Target` identity, `Capabilities`, `Findings`, `Knowledge`) shared across the solver. First-class evidence: `Finding`/`Observation` separate what was observed from what it means — a crash stays `observed`, never an overflow claim. Shared `Knowledge` (libc with provenance, stack/heap leaks) recorded once and reused (`ret2libc` consults the memoized libc). Generalized verification begun: `VerificationStatus` ladder + `Objective`/`RecoverFlag`; `Solved` kept authoritative. Additive report fields `context`/`verification`. |
 | 8 | `feat/explicit-primitives` | Explicit primitive models (`Primitive`: `PrimitiveKind`, `AddressDomain`, `AddressConstraint`, width, repeatability, controlled, evidence refs). `TargetContext.Primitives` filled by `establishPrimitives`, derived once at end of run from established evidence only — a confirmed format string ⇒ controlled stack `LEAK`; runtime-disclosed pointers ⇒ uncontrolled `LEAK` per domain. No overstating: a crash establishes nothing, and a control-flow solve does not fabricate a `CONTROL` primitive. Every primitive references the finding(s) that evidence it. Additive `context.primitives`. |
+| 9 | `feat/plan-execute-separation` | Inspectable `Plan` (steps, cost, risk, requirements, produced primitives, feasibility) produced without executing the target. Selected deterministic strategies (`stack_overwrite`, `rop_ret2win_args`, `rop_execve`, `ret2plt`, `rop_planner`, `partial_overwrite`) describe their plan via a `planFn`; session/symbolic/heap strategies stay execution-only (`canPlan()==false`, shown in `strategies`). `Run` is unchanged — no solver rewrite. `solve --plan-only` and `PlanOnly` emit plans with zero attempts and no detection probe (pure planning does not execute). Additive `report.plans`, `StrategyInfo.plannable`. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -28,13 +29,13 @@ unchanged).
 
 ## Next
 
-- **PR 9 — plan/execute separation.** Give strategies an inspectable `Plan`
-  distinct from `Execute` for the deterministic strategies, so a plan can be
-  shown before anything runs; legacy execution-only strategies stay explicit.
-- Then PRs 10–15: generalized objectives/verification; workspace persistence;
-  analyze/plan/auto/assisted CLI; isolated execution backend; interactive
-  frontend; release hardening + benchmark comparison. See `docs/ARCHITECTURE.md`
-  and the roadmap document.
+- **PR 10 — generalized objectives and verification.** Build out the objective
+  set beyond `RecoverFlag` (ReachFunction/SpawnShell/DemonstrateControl/…) and
+  distinguish observation, primitive, exploitability, and objective success in
+  the verification path, keeping `RecoverFlag`/`Solved` compatibility.
+- Then PRs 11–15: workspace persistence; analyze/plan/auto/assisted CLI;
+  isolated execution backend; interactive frontend; release hardening + benchmark
+  comparison. See `docs/ARCHITECTURE.md` and the roadmap document.
 
 ## Validation caveats
 

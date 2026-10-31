@@ -68,6 +68,9 @@ type StrategyInfo struct {
 	Description string   `json:"description"`
 	Modes       []Mode   `json:"modes"`
 	Cost        CostTier `json:"cost"`
+	// Plannable is true when the strategy can describe an inspectable plan
+	// without executing (roadmap §10); false marks an execution-only strategy.
+	Plannable bool `json:"plannable"`
 }
 
 // legacyStrategy adapts an existing *solver method to the Strategy interface
@@ -81,6 +84,10 @@ type legacyStrategy struct {
 	cost  CostTier
 	modes map[Mode]int
 	run   func(context.Context) (bool, error)
+	// planFn, when set, describes the strategy's plan for a target without
+	// executing it (roadmap §10). Execution-only strategies leave it nil and are
+	// thereby explicit; see canPlan/planIfAble in plan.go.
+	planFn func(*TargetContext) Plan
 }
 
 func (l legacyStrategy) ID() string          { return l.id }
@@ -146,9 +153,19 @@ func (l legacyStrategy) supportedModes() []Mode {
 	return ms
 }
 
-// newLegacy builds a legacy wrapper around a bound solver method.
+// newLegacy builds a legacy wrapper around a bound solver method. It is
+// execution-only: it exposes no plan.
 func newLegacy(id, desc string, cost CostTier, modes map[Mode]int, run func(context.Context) (bool, error)) legacyStrategy {
 	return legacyStrategy{id: id, desc: desc, cost: cost, modes: modes, run: run}
+}
+
+// newPlanned builds a strategy that both executes (run, unchanged) and can
+// describe its plan without executing (plan). Used for the selected deterministic
+// strategies; the rest stay execution-only via newLegacy.
+func newPlanned(id, desc string, cost CostTier, modes map[Mode]int, run func(context.Context) (bool, error), plan func(*TargetContext) Plan) legacyStrategy {
+	s := newLegacy(id, desc, cost, modes, run)
+	s.planFn = plan
+	return s
 }
 
 // formatStrategy is the format-string leak strategy: local-only and gated on a
@@ -170,16 +187,16 @@ func (s *solver) buildRegistry() *registry {
 	r.register(newLegacy("fmt_got_overwrite", "format-string GOT overwrite with %hhn to redirect a called function", CostModerate, map[Mode]int{ModeLocal: 1}, s.fmtGotOverwriteStrategy))
 	r.register(newLegacy("fmt_write_ret", "format-string write to a saved return address (defeats full RELRO)", CostModerate, map[Mode]int{ModeLocal: 2}, s.fmtWriteRetStrategy))
 	r.register(newLegacy("heap_uaf", "menu-driven heap use-after-free overwriting a function pointer", CostModerate, map[Mode]int{ModeLocal: 3, ModeRemote: 6}, s.heapUAFStrategy))
-	r.register(newLegacy("stack_overwrite", "stack buffer overflow setting a guard variable or redirecting to a win function", CostModerate, map[Mode]int{ModeLocal: 4}, s.stackOverwriteStrategy))
-	r.register(newLegacy("rop_ret2win_args", "two-argument ret2win ROP via pop rdi/pop rsi gadgets", CostCheap, map[Mode]int{ModeLocal: 5}, s.ropRet2winArgsStrategy))
-	r.register(newLegacy("rop_execve", "ret2syscall execve(\"/bin/sh\") ROP from syscall gadgets", CostCheap, map[Mode]int{ModeLocal: 6, ModeRemote: 3}, s.ropExecveStrategy))
-	r.register(newLegacy("ret2plt", "call an imported function (system/exec*) with an in-binary string argument", CostCheap, map[Mode]int{ModeLocal: 7, ModeRemote: 4}, s.ret2pltStrategy))
+	r.register(newPlanned("stack_overwrite", "stack buffer overflow setting a guard variable or redirecting to a win function", CostModerate, map[Mode]int{ModeLocal: 4}, s.stackOverwriteStrategy, planStackOverwrite))
+	r.register(newPlanned("rop_ret2win_args", "two-argument ret2win ROP via pop rdi/pop rsi gadgets", CostCheap, map[Mode]int{ModeLocal: 5}, s.ropRet2winArgsStrategy, planRopRet2winArgs))
+	r.register(newPlanned("rop_execve", "ret2syscall execve(\"/bin/sh\") ROP from syscall gadgets", CostCheap, map[Mode]int{ModeLocal: 6, ModeRemote: 3}, s.ropExecveStrategy, planRopExecve))
+	r.register(newPlanned("ret2plt", "call an imported function (system/exec*) with an in-binary string argument", CostCheap, map[Mode]int{ModeLocal: 7, ModeRemote: 4}, s.ret2pltStrategy, planRet2plt))
 	r.register(newLegacy("shellcode", "executable-stack shellcode delivered over a live session", CostModerate, map[Mode]int{ModeLocal: 8, ModeRemote: 1}, s.shellcodeStrategy))
 	r.register(newLegacy("ret2libc", "ret2libc using a leaked libc address resolved against a provided libc", CostModerate, map[Mode]int{ModeLocal: 9, ModeRemote: 2}, s.ret2libcStrategy))
 	r.register(newLegacy("canary_ret2win", "leak the stack canary, then overflow preserving it to reach a win function", CostModerate, map[Mode]int{ModeLocal: 10, ModeRemote: 5}, s.canaryStrategy))
 	r.register(newLegacy("angr_logic", "symbolic execution (angr) of logic/argv/stdin puzzles, replayed concretely", CostExpensive, map[Mode]int{ModeLocal: 11}, s.angrStrategy))
-	r.register(newLegacy("partial_overwrite", "PIE partial overwrite of a saved return address with no leak", CostExpensive, map[Mode]int{ModeLocal: 12, ModeRemote: 8}, s.partialOverwriteStrategy))
-	r.register(newLegacy("rop_planner", "synthesize multi-argument and chained calls with the ROP planner", CostModerate, map[Mode]int{ModeLocal: 13, ModeRemote: 9}, s.ropPlannerStrategy))
+	r.register(newPlanned("partial_overwrite", "PIE partial overwrite of a saved return address with no leak", CostExpensive, map[Mode]int{ModeLocal: 12, ModeRemote: 8}, s.partialOverwriteStrategy, planPartialOverwrite))
+	r.register(newPlanned("rop_planner", "synthesize multi-argument and chained calls with the ROP planner", CostModerate, map[Mode]int{ModeLocal: 13, ModeRemote: 9}, s.ropPlannerStrategy, planRopPlanner))
 	r.register(newLegacy("stack_overwrite_session", "overflow-to-shell brute force over a live session", CostExpensive, map[Mode]int{ModeRemote: 7}, s.stackOverwriteSessionStrategy))
 	return r
 }
@@ -196,7 +213,7 @@ func Catalog() []StrategyInfo {
 			return
 		}
 		seen[st.ID()] = true
-		out = append(out, StrategyInfo{ID: st.ID(), Description: st.Description(), Modes: st.supportedModes(), Cost: st.Cost().Tier})
+		out = append(out, StrategyInfo{ID: st.ID(), Description: st.Description(), Modes: st.supportedModes(), Cost: st.Cost().Tier, Plannable: st.canPlan()})
 	}
 	add(s.formatStrategy())
 	for _, st := range s.buildRegistry().all() {

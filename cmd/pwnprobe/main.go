@@ -52,6 +52,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	jsonMode := f.Bool("json", false, "emit structured JSON")
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
 	var input, manifest, original, baseline, pattern, remote, libc *string
+	var planOnly *bool
 	switch args[0] {
 	case "inspect", "detect", "strategies":
 	case "run":
@@ -61,6 +62,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
 		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
 		libc = f.String("libc", "", "path to the target's libc for ret2libc offset resolution (for a remote libc that differs from this machine's)")
+		planOnly = f.Bool("plan-only", false, "show the candidate plans without executing the target")
 	case "benchmark":
 		manifest = f.String("manifest", "fixtures/manifest.json", "controlled fixture manifest")
 		original = f.String("original", "", "optional original pwnpasi.py for detection comparison")
@@ -126,7 +128,11 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			for i, m := range st.Modes {
 				modes[i] = string(m)
 			}
-			fmt.Fprintf(out, "%-24s [%-13s] %-9s %s\n", st.ID, strings.Join(modes, ","), st.Cost, st.Description)
+			plan := "exec-only"
+			if st.Plannable {
+				plan = "plannable"
+			}
+			fmt.Fprintf(out, "%-24s [%-13s] %-9s %-10s %s\n", st.ID, strings.Join(modes, ","), st.Cost, plan, st.Description)
 		}
 		return nil
 	}
@@ -216,6 +222,21 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			fmt.Fprintln(out, "Limitation:", limitation)
 		}
 	case "solve":
+		if *planOnly {
+			report, err := solve.PlanOnly(ctx, path, *remote, *libc)
+			if err != nil {
+				return err
+			}
+			if *jsonMode {
+				return emit(report)
+			}
+			fmt.Fprintf(out, "plan-only: %d candidate plan(s) for %s mode (target not executed)\n", len(report.Plans), report.Environment.Mode)
+			printPlans(out, report.Plans)
+			for _, limitation := range report.Limitations {
+				fmt.Fprintln(out, "Limitation:", limitation)
+			}
+			return nil
+		}
 		report, err := solve.Solve(ctx, path, *pattern, *remote, *libc, *timeout)
 		if err != nil {
 			return err
@@ -236,6 +257,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 				}
 				fmt.Fprintf(out, "plan (* = deferred as expensive): %s\n", strings.Join(planned, " -> "))
 			}
+			printPlans(out, report.Plans)
 			env := report.Environment
 			commit := env.Commit
 			if commit == "" {
@@ -288,4 +310,28 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printPlans renders the inspectable candidate plans: one header line per plan
+// (strategy, feasibility, risk) with any unmet requirement, then its steps.
+func printPlans(out io.Writer, plans []solve.Plan) {
+	for _, p := range plans {
+		feas := "feasible"
+		if !p.Feasible {
+			feas = "INFEASIBLE"
+		}
+		fmt.Fprintf(out, "plan %-20s %-10s risk=%-6s cost=%s\n", p.Strategy, feas, p.Risk, p.Cost.Tier)
+		for _, r := range p.Requires {
+			if !r.Met {
+				mark := "unmet: " + r.Name
+				if r.Detail != "" {
+					mark += " (" + r.Detail + ")"
+				}
+				fmt.Fprintln(out, "    requirement", mark)
+			}
+		}
+		for _, st := range p.Steps {
+			fmt.Fprintf(out, "    %d. %s\n", st.Index, st.Action)
+		}
+	}
 }
