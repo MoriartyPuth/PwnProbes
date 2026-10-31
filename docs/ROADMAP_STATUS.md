@@ -36,10 +36,22 @@ unchanged).
 ## Next
 
 The 15-PR hybrid-framework sequence is complete (0.5 → 1.0; see
-[`docs/RELEASE.md`](RELEASE.md)). Follow-on work remains optional and is not part
-of this sequence: a sandboxed/container execution backend, broader heap
-exploitation, general ROP expansion (write-what-where, `ret2csu`, stack pivot),
-additional architectures, and a richer terminal UI. See `docs/ARCHITECTURE.md`.
+[`docs/RELEASE.md`](RELEASE.md)). The post-1.0 plan — PRs 16–20, which turn the
+instrumentation into a reasoning planner that composes primitives — is written up
+in [`docs/HYBRID_FRAMEWORK_ROADMAP.md`](HYBRID_FRAMEWORK_ROADMAP.md) §30 and
+summarized here. It is planned, not yet started.
+
+| PR | Branch (planned) | Summary |
+|----|------------------|---------|
+| 16 | `feat/resolve-plans` | Finish plan/execute: factor each strategy's recognition into a shared `Resolve(*TargetContext)` so plans carry the real gadgets/strings/addresses execution uses. |
+| 17 | `feat/scoring-planner` | Scoring planner that composes established primitives toward an objective (reusing shared `Knowledge`); a composed chain is a hypothesis until the oracle verifies it. |
+| 18 | `feat/primitive-objectives` | Objectives grade from the established primitives (PRs 16–17), removing the strategy-name classification heuristic. |
+| 19 | `feat/isolated-backend` | An `Isolated` execution backend (rlimit trampoline + optional namespace isolation) that enforces `--isolation sandbox` where supported. |
+| 20 | `feat/libc-fingerprint-benchmark` | Robust libc fingerprinting for `ret2libc` across glibc versions, plus a held-out generalization benchmark reported separately. |
+
+Keystone first: PRs 16 + 17 together (18 falls out of them); then 19–20 harden.
+Breadth work (full heap, general ROP expansion, more architectures, richer UI)
+stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 
 
 ## Validation caveats

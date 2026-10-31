@@ -1475,3 +1475,32 @@ Do not combine a broad code move, solver rewrite, workspace redesign, and CLI re
 
 The first concrete deliverable is a compatibility-preserving session reliability patch with a reproducible baseline. The architectural destination is one shared engine that turns observations into constrained primitives, explicit plans, controlled execution, and verifiable outcomes.
 
+
+---
+
+# 30. Follow-on pull request sequence (16–20): from instrumentation to composition
+
+*Post-1.0 plan. PRs 1–15 built the shared engine, the evidence/primitive/plan/
+objective models, persistence, policy, and the frontends — but the engine still
+describes and grades runs more than it reasons over them. Each strategy's `Run`
+still hardcodes recognition → payload → oracle, nothing composes primitives
+across strategies, and the inspectable plans are declarative intent rather than
+plans resolved from the binary. These five PRs turn the instrumentation into a
+reasoning planner. The honest flag oracle and `Solved` stay authoritative
+throughout; everything remains behaviour-preserving unless a PR says otherwise.*
+
+| PR | Scope | Validation / acceptance |
+|---|---|---|
+| **16** | Resolve plans from real static analysis (finish plan/execute) | Factor each strategy's recognition phase into a `Resolve(*TargetContext)` that finds concrete gadgets/strings/GOT entries and records them as primitives; `Plan` and `Execute` call the same `Resolve`, so a plan carries the real addresses it will use. Existing solves unchanged; a plan's resolved artifacts match what execution uses. |
+| **17** | Scoring planner that composes primitives (roadmap §16) | Strategies declare primitive **requirements** as well as `Produces`; a bounded backward-chaining/scoring search composes established primitives toward an objective (e.g. `SpawnShell` ← `CALL(system)` ← `CONTROL` + libc base ← `LEAK(libc)`), reusing shared `Knowledge` so a leak feeds a later chain without rediscovery. A composed chain is a hypothesis until the oracle verifies it. Deterministic given fixed evidence; expensive speculation never precedes a strongly-supported composed plan without a recorded reason. |
+| **18** | Objectives grade from established primitives | Replace the per-strategy capability classification (PR 10) with grading read directly from the primitives PRs 16–17 establish, removing the strategy-name heuristic and its drift risk. Objective statuses unchanged on the existing labs. |
+| **19** | Supported isolated execution backend | Implement an `Isolated` backend behind the `PolicyBackend` interface: an rlimit trampoline (memory/CPU/process) plus optional namespace isolation (network-none, read-only FS) via a supported sandbox tool. `--isolation sandbox` enforces rather than rejects where the platform supports it; unsupported controls still fail explicitly. Process-tree and resource-limit checks on supported platforms. |
+| **20** | Robust libc handling + generalization benchmark | Make `ret2libc` identify the leaked symbol by fingerprinting the libc (try all exported offsets; libc-database style) instead of assuming `system`, emitting a finding when local libc ≠ target; add a cross-glibc lab matrix. Add a **held-out** generalization benchmark (real binaries no strategy was tuned to) reported separately from the known-to-implementation suite, with solve rate, median+tail latency, and failures, and thresholds set from measured numbers. |
+
+Dependency guidance: PRs 16 and 17 are the keystone and are best done together —
+16 gives the planner concrete primitives to compose, and 18 then falls out of
+17 for free. PRs 19–20 harden and give the composition credibility; do them
+after the planner exists, not before. Breadth items (full heap: tcache poisoning
+on glibc 2.27–2.31; general ROP expansion: `write4`/`ret2csu`/stack pivot, §14;
+additional architectures; a richer terminal UI) remain optional follow-on work
+outside this sequence.
