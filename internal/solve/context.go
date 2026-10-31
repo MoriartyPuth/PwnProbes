@@ -10,13 +10,15 @@ import (
 // information was scattered across inspect.Report, detect.Report, solver fields,
 // and transient locals inside each strategy. TargetContext centralizes it so a
 // strategy records what it learns and later strategies reuse it instead of
-// rediscovering it. Primitives (roadmap §7) are a later PR; the field is omitted
-// here deliberately so this change stays additive and behavior-preserving.
+// rediscovering it. Primitives are the capabilities established from that
+// evidence (roadmap §7); they are derived once at the end of a run by
+// establishPrimitives and are present only where evidence supports them.
 type TargetContext struct {
 	Target       Target         `json:"target"`
 	Binary       inspect.Report `json:"binary"`
 	Capabilities Capabilities   `json:"capabilities"`
 	Findings     []Finding      `json:"findings"`
+	Primitives   []Primitive    `json:"primitives,omitempty"`
 	Knowledge    Knowledge      `json:"knowledge"`
 }
 

@@ -145,6 +145,10 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	defer func() {
 		report.Timing.TotalMS = time.Since(start).Milliseconds()
 		if tc != nil {
+			// Derive primitives from the evidence the run gathered, then grade the
+			// objective. Both read the final findings/knowledge, so they run after
+			// the strategies have recorded everything.
+			tc.establishPrimitives()
 			report.Context = tc
 			v := RecoverFlag{}.Verify(outcomeFrom(&report, tc))
 			report.Verification = &v
