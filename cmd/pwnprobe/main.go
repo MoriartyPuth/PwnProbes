@@ -261,6 +261,13 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 					}
 					fmt.Fprintln(out, line)
 				}
+				for _, p := range report.Context.Primitives {
+					where := string(p.Domain)
+					if p.Target != "" {
+						where = p.Target
+					}
+					fmt.Fprintf(out, "primitive %-8s %-8s status=%s source=%s evidence=%v\n", p.Kind, where, p.Status, p.Source, p.Evidence)
+				}
 			}
 			for _, a := range report.Attempts {
 				fmt.Fprintf(out, "  attempt %s: outcome=%s recovered=%v\n", a.Strategy, a.Result.Outcome, a.Recovered)
