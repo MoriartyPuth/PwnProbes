@@ -16,6 +16,7 @@ import (
 
 	"github.com/MoriartyPuth/PwnProbes/internal/benchmark"
 	"github.com/MoriartyPuth/PwnProbes/internal/detect"
+	"github.com/MoriartyPuth/PwnProbes/internal/execution"
 	"github.com/MoriartyPuth/PwnProbes/internal/extract"
 	"github.com/MoriartyPuth/PwnProbes/internal/inspect"
 	"github.com/MoriartyPuth/PwnProbes/internal/runner"
@@ -56,7 +57,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	f.SetOutput(errOut)
 	jsonMode := f.Bool("json", false, "emit structured JSON")
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
-	var input, manifest, original, baseline, pattern, remote, libc, save, verify *string
+	var input, manifest, original, baseline, pattern, remote, libc, save, verify, isolation *string
 	var planOnly, redact, approve *bool
 	switch args[0] {
 	case "inspect", "detect", "strategies":
@@ -81,6 +82,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		planOnly = f.Bool("plan-only", false, "show the candidate plans without executing the target")
 		save = f.String("save", "", "save the run as a workspace JSON file at this path")
 		redact = f.Bool("redact", false, "with --save, strip sensitive config (remote endpoint, libc path, absolute paths)")
+		isolation = f.String("isolation", "none", "execution isolation: none (native) | sandbox | container; an unsupported level is rejected, not silently ignored")
 	case "benchmark":
 		manifest = f.String("manifest", "fixtures/manifest.json", "controlled fixture manifest")
 		original = f.String("original", "", "optional original pwnpasi.py for detection comparison")
@@ -364,6 +366,14 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			return nil
 		}
+		// Validate the requested execution policy against the native backend and
+		// reject an isolation level it cannot enforce, rather than running the
+		// target with weaker isolation than asked for.
+		pol := execution.DefaultPolicy(*timeout)
+		pol.Isolation = execution.IsolationLevel(*isolation)
+		if perr := (execution.Native{}).ValidatePolicy(pol); perr != nil {
+			return perr
+		}
 		report, err := solve.Solve(ctx, path, *pattern, *remote, *libc, *timeout)
 		if err != nil {
 			return err
@@ -400,7 +410,10 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			if commit == "" {
 				commit = "unknown"
 			}
-			fmt.Fprintf(out, "env: commit=%s go=%s %s/%s mode=%s budget=%dms\n", commit, env.GoVersion, env.OS, env.Arch, env.Mode, env.TimeoutMS)
+			fmt.Fprintf(out, "env: commit=%s go=%s %s/%s mode=%s backend=%s budget=%dms\n", commit, env.GoVersion, env.OS, env.Arch, env.Mode, env.Backend, env.TimeoutMS)
+			if report.Execution != nil {
+				fmt.Fprintf(out, "execution: backend=%s enforces=%v\n", report.Execution.Backend, report.Execution.Enforced)
+			}
 			if report.Solved {
 				fmt.Fprintf(out, "SOLVED: recovered %v\n", report.Flags)
 				if report.Winning != nil {

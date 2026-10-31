@@ -74,6 +74,10 @@ type Report struct {
 	// Verification is the RecoverFlag objective result, kept for compatibility.
 	// Solved above stays authoritative; this grades progress toward the flag.
 	Verification *Verification `json:"verification,omitempty"`
+	// Execution records the backend that ran the target and its effective policy
+	// (roadmap §13/§24), so a report states how the target was run and what the
+	// backend does and does not enforce.
+	Execution *execution.PolicySummary `json:"execution,omitempty"`
 	// Objectives is the full generalized verification (roadmap §19/§20): the run
 	// graded against every standard objective (RecoverFlag first), so partial
 	// outcomes — a leak, a demonstrated write/control, a spawned shell — are
@@ -99,7 +103,8 @@ type Environment struct {
 	GoVersion string    `json:"go_version"`
 	OS        string    `json:"os"`
 	Arch      string    `json:"arch"`
-	Mode      string    `json:"mode"` // "local" or "remote"
+	Mode      string    `json:"mode"`    // "local" or "remote"
+	Backend   string    `json:"backend"` // execution backend that ran the target (e.g. "native")
 	StartedAt time.Time `json:"started_at"`
 	TimeoutMS int64     `json:"timeout_ms"` // per-run deadline (the strategy budget)
 }
@@ -194,6 +199,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			OS:        runtime.GOOS,
 			Arch:      runtime.GOARCH,
 			Mode:      mode,
+			Backend:   execution.Native{}.BackendName(),
 			StartedAt: start.UTC(),
 			TimeoutMS: timeout.Milliseconds(),
 		},
@@ -208,6 +214,8 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	}
 	tc = newTargetContext(binary, path, mode, remote)
 	s := &solver{ex: ex, path: path, workDir: filepath.Dir(path), timeout: timeout, remote: remote, libc: libc, report: &report, exec: execution.Native{}, tc: tc}
+	ps := execution.Summarize(execution.Native{}, execution.DefaultPolicy(timeout))
+	report.Execution = &ps
 	reg := s.buildRegistry()
 
 	if remote != "" {
@@ -275,6 +283,7 @@ func PlanOnly(ctx context.Context, path, remote, libc string) (Report, error) {
 			OS:        runtime.GOOS,
 			Arch:      runtime.GOARCH,
 			Mode:      mode,
+			Backend:   execution.Native{}.BackendName(),
 			StartedAt: time.Now().UTC(),
 		},
 		Attempts: []Attempt{},
