@@ -50,15 +50,16 @@ func TestPlanRopRet2winArgsInfeasibleUnderPIE(t *testing.T) {
 	}
 }
 
-// ret2plt feasibility hinges on an imported exec function.
-func TestPlanRet2pltNeedsExecImport(t *testing.T) {
-	with := planRet2plt(tcWith(64, false, nil, []string{"printf", "system"}))
-	if !with.Feasible {
-		t.Errorf("ret2plt should be feasible with an imported system(): %+v", with.Requires)
+// ret2plt's plan is now resolution-driven: against a target that cannot be
+// resolved (no real ELF here), it is infeasible with the resolved requirements
+// unmet. Feasibility from a real resolution is covered in resolve_test.go.
+func TestPlanRet2pltResolutionDriven(t *testing.T) {
+	p := planRet2plt(tcWith(64, false, nil, []string{"printf", "system"}))
+	if p.Feasible {
+		t.Error("ret2plt should be infeasible when gadgets/strings cannot be resolved from the target")
 	}
-	without := planRet2plt(tcWith(64, false, nil, []string{"printf", "puts"}))
-	if without.Feasible {
-		t.Error("ret2plt should be infeasible without an exec import")
+	if !hasUnmet(p, "pop rdi; ret gadget") {
+		t.Errorf("the resolved gadget requirement should be unmet and visible: %+v", p.Requires)
 	}
 }
 

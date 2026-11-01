@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (15 of 15) — roadmap complete, all merged into `main`
+## Done (16 of 20), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -28,6 +28,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 13 | `feat/execution-policy` | `ExecutionPolicy` + backend capability model (`internal/execution`): controls (timeout, output/input bounds, process-tree kill, scratch dirs, memory/cpu/process/network/filesystem). `Native` declares its honest enforced set (it is not a sandbox) and `ValidatePolicy` returns an explicit `UnsupportedPolicyError` for any isolation control it cannot provide — never silently degrading. Backend + effective policy surfaced in the report (`environment.backend`, `execution`). `solve --isolation sandbox|container` is rejected before running. Native stays the default; default policy validates cleanly (no behavior change). |
 | 14 | `feat/interactive-frontend` | `internal/repl`: an interactive shell over the same engine services (no strategy logic in handlers). Commands: `info`, `analyze`, `plans`, `plan <id>`, `strategies`, `solve`, `findings`, `primitives`, `objectives`, `knowledge [libc PATH]`, `save`, `open`/`resume`, `help`, `quit`. Injecting knowledge invalidates the current plans (re-analyze on next use). Reuses `PlanOnly`/`Solve`/`Workspace`; supports partial progress (objective evidence shown without a flag). Driven by an `Engine` interface, so it is unit-tested with a fake (no ELF, no execution). CLI: `pwnprobe interactive <target>`. |
 | 15 | `feat/release-hardening` | Release hardening + 1.0 gate: [`docs/RELEASE.md`](RELEASE.md) publishes the compatibility policy, the objective-verification contract, the security-boundary summary, and the extension guide, and points to the measured benchmark results in `PwnProbe-benchmarks/results/`. Version bumped to `1.0.0`. No engine behaviour change. |
+| 16 | `feat/resolve-plans` | Finish plan/execute for `ret2plt`: static recognition (pop-rdi gadget, exec PLT stub, in-binary command string) factored into a shared `Ret2pltResolution`/`resolveRet2pltFrom` that both `ret2pltStrategy` (execute) and `planRet2plt` (inspect) consume, so the plan carries the concrete gadget/string/stub addresses execution uses — verified to match on a real lab. Behaviour-preserving; the per-strategy import heuristic is replaced by real resolution. Other strategies follow incrementally. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -43,13 +44,12 @@ summarized here. It is planned, not yet started.
 
 | PR | Branch (planned) | Summary |
 |----|------------------|---------|
-| 16 | `feat/resolve-plans` | Finish plan/execute: factor each strategy's recognition into a shared `Resolve(*TargetContext)` so plans carry the real gadgets/strings/addresses execution uses. |
 | 17 | `feat/scoring-planner` | Scoring planner that composes established primitives toward an objective (reusing shared `Knowledge`); a composed chain is a hypothesis until the oracle verifies it. |
 | 18 | `feat/primitive-objectives` | Objectives grade from the established primitives (PRs 16–17), removing the strategy-name classification heuristic. |
 | 19 | `feat/isolated-backend` | An `Isolated` execution backend (rlimit trampoline + optional namespace isolation) that enforces `--isolation sandbox` where supported. |
 | 20 | `feat/libc-fingerprint-benchmark` | Robust libc fingerprinting for `ret2libc` across glibc versions, plus a held-out generalization benchmark reported separately. |
 
-Keystone first: PRs 16 + 17 together (18 falls out of them); then 19–20 harden.
+PR 16 landed (ret2plt split); next keystone is PR 17 (18 falls out of it); then 19–20 harden.
 Breadth work (full heap, general ROP expansion, more architectures, richer UI)
 stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 

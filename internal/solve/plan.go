@@ -150,18 +150,6 @@ func reqNoPIE(tc *TargetContext) Requirement {
 	return Requirement{Name: "non-PIE (fixed addresses)", Met: met, Detail: detail}
 }
 
-// hasExecImport reports whether the binary imports a command-executing function
-// a ret2plt chain could call.
-func hasExecImport(tc *TargetContext) bool {
-	for _, im := range tc.Binary.Imports {
-		switch im {
-		case "system", "execve", "execv", "execl", "execlp", "execvp", "popen":
-			return true
-		}
-	}
-	return false
-}
-
 // hasWinFunction reports whether the binary defines a win-named function (win,
 // flag, shell, ...), the natural target of a ret2win redirect.
 func hasWinFunction(tc *TargetContext) bool {
@@ -233,23 +221,60 @@ func planRopExecve(tc *TargetContext) Plan {
 }
 
 func planRet2plt(tc *TargetContext) Plan {
+	return planRet2pltWith(tc, resolveRet2plt(tc))
+}
+
+// planRet2pltWith builds the ret2plt plan from an already-resolved view, so the
+// plan's requirements and steps carry the concrete gadget, string, and PLT-stub
+// addresses that execution will use. Separated from the ELF read so it can be
+// unit-tested with a hand-built resolution.
+func planRet2pltWith(tc *TargetContext, res Ret2pltResolution) Plan {
 	reqs := []Requirement{
 		reqAmd64(tc),
 		reqNoPIE(tc),
-		{Name: "imported system/exec* function", Met: hasExecImport(tc)},
+		{Name: "pop rdi; ret gadget", Met: res.HasPopRDI,
+			Detail: must(res.HasPopRDI, "at "+hexAddr(res.PopRDI, res.HasPopRDI), "no `pop rdi; ret` gadget found")},
+		{Name: "callable system/exec* PLT stub", Met: len(res.Calls) > 0,
+			Detail: must(len(res.Calls) > 0, callDetail(res.Calls), "no system/exec PLT stub resolved")},
+		{Name: "in-binary command string", Met: len(res.Strings) > 0,
+			Detail: must(len(res.Strings) > 0, stringDetail(res.Strings), "no usable command string in the binary")},
+	}
+	// Steps reference the concrete resolved addresses when present.
+	argStep := "point rdi at an in-binary command string"
+	if len(res.Strings) > 0 {
+		argStep = fmt.Sprintf("point rdi at %q @ %#x", res.Strings[0].text, res.Strings[0].addr)
+	}
+	callStep := "call system/exec* through its PLT stub"
+	if len(res.Calls) > 0 {
+		callStep = fmt.Sprintf("return into %s@plt @ %#x", res.Calls[0].name, res.Calls[0].addr)
 	}
 	return Plan{
 		Steps: steps(
 			"establish the saved-RIP offset",
-			"find a `pop rdi; ret` gadget to load the argument register",
-			"point rdi at an in-binary command string (e.g. \"/bin/sh\", \"cat flag\")",
-			"call system/exec* through its PLT stub",
+			fmt.Sprintf("load rdi via `pop rdi; ret` @ %s", hexAddr(res.PopRDI, res.HasPopRDI)),
+			argStep,
+			callStep,
 			"verify the objective",
 		),
 		Requires: reqs,
 		Produces: []PrimitiveKind{PrimitiveCall},
 		Feasible: planFeasible(reqs),
 	}
+}
+
+// callDetail / stringDetail summarize the resolved artifacts for a plan.
+func callDetail(calls []pltCall) string {
+	if len(calls) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s@plt at %#x", calls[0].name, calls[0].addr)
+}
+
+func stringDetail(strs []strEntry) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%q at %#x", strs[0].text, strs[0].addr)
 }
 
 func planRopPlanner(tc *TargetContext) Plan {
