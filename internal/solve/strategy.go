@@ -198,6 +198,7 @@ func (s *solver) buildRegistry() *registry {
 	r.register(newPlanned("partial_overwrite", "PIE partial overwrite of a saved return address with no leak", CostExpensive, map[Mode]int{ModeLocal: 12, ModeRemote: 8}, s.partialOverwriteStrategy, planPartialOverwrite))
 	r.register(newPlanned("rop_planner", "synthesize multi-argument and chained calls with the ROP planner", CostModerate, map[Mode]int{ModeLocal: 13, ModeRemote: 9}, s.ropPlannerStrategy, planRopPlanner))
 	r.register(newLegacy("stack_overwrite_session", "overflow-to-shell brute force over a live session", CostExpensive, map[Mode]int{ModeRemote: 7}, s.stackOverwriteSessionStrategy))
+	r.register(newLegacy("chain_leak_ret2libc", "composed chain: format-string libc leak feeding a ret2libc overflow, in one session", CostExpensive, map[Mode]int{ModeLocal: 14, ModeRemote: 10}, s.chainLeakRet2libcStrategy))
 	return r
 }
 

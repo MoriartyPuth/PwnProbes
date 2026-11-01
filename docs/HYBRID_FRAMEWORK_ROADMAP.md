@@ -1523,3 +1523,14 @@ consumes, in one flow) as a single composed objective. That is the point at whic
 composition changes *what* can be solved, not only the order; it needs strategies
 to consume established primitives/knowledge from earlier steps rather than
 re-deriving them, and is the natural next PR.
+
+**Landed (PR 22).** `chain_leak_ret2libc` is the first chain-as-unit strategy: in
+one session it sends a format-string trigger to leak a libc address, establishes
+the libc base as shared `Knowledge.LibcBase` plus an intermediate leak finding
+and primitive, then consumes that base in a ret2libc overflow — a class no single
+recipe solves (ret2libc only uses auto-leaks; the format-string strategy only
+reads the flag). `libcBaseFor` reuses a base already in Knowledge rather than
+re-deriving it, so the establish-then-consume state threads across steps. It is
+ranked expensive and so deferred behind every cheaper technique, adding capability
+without disturbing the solve order or latency of targets a direct recipe handles.
+The same mechanism generalizes to further composed chains.
