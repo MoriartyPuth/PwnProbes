@@ -67,6 +67,10 @@ type Report struct {
 	// strategies eligible in this mode, produced without executing the target.
 	// Distinct from Plan above, which is only the ranked id/cost order.
 	Plans []Plan `json:"plans,omitempty"`
+	// Chains are goal-directed composed capability chains (roadmap §30 PR 17):
+	// cross-strategy hypotheses (e.g. a leak feeding ret2libc) toward a shell/flag,
+	// each with its links' availability. Reported, not executed.
+	Chains []ComposedChain `json:"chains,omitempty"`
 	// Context is the shared TargetContext for the run: target identity,
 	// capabilities, first-class findings (observations vs. interpretations), and
 	// accumulated Knowledge. Additive; the legacy fields above are unchanged.
@@ -163,6 +167,9 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 			// objective. Both read the final findings/knowledge, so they run after
 			// the strategies have recorded everything.
 			tc.establishPrimitives()
+			// Compose goal-directed capability chains from the final evidence,
+			// static resolution, and knowledge (reasoning only; nothing executes).
+			report.Chains = composeChains(tc, resolveRet2plt(tc))
 			report.Context = tc
 			// Verify against the full standard objective set. RecoverFlag is first
 			// and is mirrored into Verification, so Solved and the legacy
@@ -296,6 +303,7 @@ func PlanOnly(ctx context.Context, path, remote, libc string) (Report, error) {
 	s := &solver{path: path, workDir: filepath.Dir(path), remote: remote, libc: libc, report: &report, tc: tc}
 	reg := s.buildRegistry()
 	report.Plans = s.collectPlans(planMode, reg)
+	report.Chains = composeChains(tc, resolveRet2plt(tc))
 	report.Context = tc
 	return report, nil
 }
