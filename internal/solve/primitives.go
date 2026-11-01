@@ -122,6 +122,50 @@ func (tc *TargetContext) establishPrimitives() {
 		}
 	}
 	tc.establishDisclosedLeaks()
+	tc.establishDemonstratedCapabilities()
+}
+
+// establishDemonstratedCapabilities records the primitives a verified solve
+// demonstrated. A recovered flag means the winning strategy's exploit actually
+// ran, so the capability it relies on (control of a saved return address, a
+// memory write, a chosen call) was demonstrated — this is evidence, not the
+// crash-based inference PR 8 declined to make. Each primitive references the flag
+// finding and is marked exploitability-established (a controlled target was
+// reached). Which capability each technique proves lives in one place,
+// demonstratedBy.
+func (tc *TargetContext) establishDemonstratedCapabilities() {
+	for _, f := range tc.Findings {
+		if f.Kind != FindingFlag || f.Status != StatusObjectiveMet {
+			continue
+		}
+		kinds, _ := demonstratedBy(f.Source)
+		for _, k := range kinds {
+			tc.addPrimitive(Primitive{
+				ID:         primitiveID(tc, k),
+				Kind:       k,
+				Status:     StatusExploitabilityEstablished,
+				Source:     f.Source,
+				Target:     capabilityTarget(k),
+				Repeatable: true,
+				Evidence:   []string{f.ID},
+				Note:       "demonstrated by a verified solve via " + f.Source,
+			})
+		}
+	}
+}
+
+// capabilityTarget describes what a demonstrated primitive drives.
+func capabilityTarget(k PrimitiveKind) string {
+	switch k {
+	case PrimitiveControl:
+		return "saved return address / function pointer"
+	case PrimitiveCall:
+		return "chosen function"
+	case PrimitiveWrite:
+		return "memory"
+	default:
+		return ""
+	}
 }
 
 // establishDisclosedLeaks turns pointer values the target disclosed at run time

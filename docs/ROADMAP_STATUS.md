@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (17 of 20), all merged into `main`
+## Done (18 of 20), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -30,6 +30,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 15 | `feat/release-hardening` | Release hardening + 1.0 gate: [`docs/RELEASE.md`](RELEASE.md) publishes the compatibility policy, the objective-verification contract, the security-boundary summary, and the extension guide, and points to the measured benchmark results in `PwnProbe-benchmarks/results/`. Version bumped to `1.0.0`. No engine behaviour change. |
 | 16 | `feat/resolve-plans` | Finish plan/execute for `ret2plt`: static recognition (pop-rdi gadget, exec PLT stub, in-binary command string) factored into a shared `Ret2pltResolution`/`resolveRet2pltFrom` that both `ret2pltStrategy` (execute) and `planRet2plt` (inspect) consume, so the plan carries the concrete gadget/string/stub addresses execution uses — verified to match on a real lab. Behaviour-preserving; the per-strategy import heuristic is replaced by real resolution. Other strategies follow incrementally. |
 | 17 | `feat/scoring-planner` | Primitive composition: `composeChains` builds goal-directed, cross-strategy capability chains toward a shell/flag from the static resolution, established primitives, and shared `Knowledge` — e.g. a format-string/disclosed `LEAK` feeding `ret2libc`, a dependency single-strategy plans cannot express, reusing a known leak rather than rediscovering it. Each link is marked available or not; a chain is a hypothesis (reasoning only — execution and the honest oracle are unchanged). Deterministic. Additive `report.chains`, shown by `analyze`/`plan`/`solve`. |
+| 18 | `feat/primitive-objectives` | Objectives grade from established primitives, not strategy names. A verified solve now establishes the primitive it demonstrated (control/write/call) from the winning strategy via a single `demonstratedBy` classification, referencing the flag finding at `exploitability_established`. `DemonstrateControl`/`DemonstrateWrite` read those primitives; `SpawnShell` reads a shell flag set from the same one place. The three per-objective strategy maps are removed. Objective statuses are unchanged on existing labs (verified on lab08); they now trace to primitives. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -45,11 +46,10 @@ summarized here. It is planned, not yet started.
 
 | PR | Branch (planned) | Summary |
 |----|------------------|---------|
-| 18 | `feat/primitive-objectives` | Objectives grade from the established primitives (PRs 16–17), removing the strategy-name classification heuristic. |
 | 19 | `feat/isolated-backend` | An `Isolated` execution backend (rlimit trampoline + optional namespace isolation) that enforces `--isolation sandbox` where supported. |
 | 20 | `feat/libc-fingerprint-benchmark` | Robust libc fingerprinting for `ret2libc` across glibc versions, plus a held-out generalization benchmark reported separately. |
 
-PRs 16–17 landed (ret2plt split; primitive composition). Next: PR 18 (objectives grade from primitives), then 19–20 harden.
+PRs 16–18 landed. Next: PR 19 (isolated backend), then PR 20 (libc fingerprint + held-out benchmark).
 Breadth work (full heap, general ROP expansion, more architectures, richer UI)
 stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 

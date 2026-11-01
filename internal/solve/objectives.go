@@ -13,39 +13,58 @@ package solve
 // strongest rung the evidence supports — a crash is only Observed — or
 // Inconclusive when nothing bears on the goal.
 
-// Strategy capability classes: what a successful solve via each strategy
-// demonstrates. These are the techniques whose success is proof of the named
-// capability (control of execution, a memory write, a spawned shell). Leak is
-// handled through established primitives, not this map. Entries are deliberately
-// conservative: a strategy appears only where its success unambiguously implies
-// the capability.
-var (
-	controlStrategies = map[string]bool{
+// demonstratedBy reports the capabilities a *verified solve* via a strategy
+// proves: the primitive kinds its success establishes, and whether that success
+// spawned a shell. This is the single place the "which technique proves what"
+// knowledge lives; it is consulted once, when a solve is recorded, to establish
+// primitives (see establishDemonstratedCapabilities) — not re-derived at grading
+// time. Entries are conservative: a strategy appears only where its success
+// unambiguously implies the capability. Leak is established from evidence
+// elsewhere, not here.
+func demonstratedBy(strategy string) (kinds []PrimitiveKind, shell bool) {
+	control := map[string]bool{
 		"stack_overwrite": true, "stack_overwrite_session": true,
 		"rop_ret2win_args": true, "rop_execve": true, "ret2plt": true,
 		"rop_planner": true, "shellcode": true, "ret2libc": true,
 		"canary_ret2win": true, "partial_overwrite": true, "heap_uaf": true,
 		"fmt_got_overwrite": true, "fmt_write_ret": true,
 	}
-	writeStrategies = map[string]bool{
+	write := map[string]bool{
 		"stack_overwrite": true, "stack_overwrite_session": true,
 		"fmt_got_overwrite": true, "fmt_write_ret": true,
 	}
-	shellStrategies = map[string]bool{
+	call := map[string]bool{
+		"rop_ret2win_args": true, "rop_execve": true, "ret2plt": true,
+		"rop_planner": true, "ret2libc": true,
+	}
+	shellSet := map[string]bool{
 		"rop_execve": true, "shellcode": true, "ret2libc": true,
 		"stack_overwrite_session": true,
 	}
-)
+	if control[strategy] {
+		kinds = append(kinds, PrimitiveControl)
+	}
+	if write[strategy] {
+		kinds = append(kinds, PrimitiveWrite)
+	}
+	if call[strategy] {
+		kinds = append(kinds, PrimitiveCall)
+	}
+	return kinds, shellSet[strategy]
+}
 
-// hasLeakPrimitive reports whether the run established any leak primitive.
-func (o Outcome) hasLeakPrimitive() bool {
+// hasPrimitiveKind reports whether the run established a primitive of kind k.
+func (o Outcome) hasPrimitiveKind(k PrimitiveKind) bool {
 	for _, p := range o.Primitives {
-		if p.Kind == PrimitiveLeak {
+		if p.Kind == k {
 			return true
 		}
 	}
 	return false
 }
+
+// hasLeakPrimitive reports whether the run established any leak primitive.
+func (o Outcome) hasLeakPrimitive() bool { return o.hasPrimitiveKind(PrimitiveLeak) }
 
 // hasConfirmedFormatString reports whether a format-string behavior was confirmed.
 func (o Outcome) hasConfirmedFormatString() bool {
@@ -65,11 +84,6 @@ func (o Outcome) observedCrash() bool {
 		}
 	}
 	return false
-}
-
-// solvedVia reports whether the run solved and the winning strategy is in set.
-func (o Outcome) solvedVia(set map[string]bool) bool {
-	return o.Solved && set[o.WinningStrategy]
 }
 
 // EstablishLeak: can the run read memory / disclose an address? Met when a leak
@@ -101,9 +115,9 @@ type DemonstrateControl struct{}
 func (DemonstrateControl) ID() string { return "demonstrate_control" }
 func (o DemonstrateControl) Verify(out Outcome) Verification {
 	switch {
-	case out.solvedVia(controlStrategies):
+	case out.hasPrimitiveKind(PrimitiveControl):
 		return Verification{Objective: o.ID(), Status: StatusObjectiveMet,
-			Detail: "solved via a control-flow technique (" + out.WinningStrategy + "), demonstrating control of execution"}
+			Detail: "a control primitive was established (saved return address / function pointer)"}
 	case out.observedCrash():
 		return Verification{Objective: o.ID(), Status: StatusObserved,
 			Detail: "a crash was observed; control is possible but unconfirmed"}
@@ -119,9 +133,9 @@ type DemonstrateWrite struct{}
 
 func (DemonstrateWrite) ID() string { return "demonstrate_write" }
 func (o DemonstrateWrite) Verify(out Outcome) Verification {
-	if out.solvedVia(writeStrategies) {
+	if out.hasPrimitiveKind(PrimitiveWrite) {
 		return Verification{Objective: o.ID(), Status: StatusObjectiveMet,
-			Detail: "solved via a write technique (" + out.WinningStrategy + "), demonstrating a memory write"}
+			Detail: "a write primitive was established"}
 	}
 	return Verification{Objective: o.ID(), Status: StatusInconclusive,
 		Detail: "no write demonstrated"}
@@ -133,7 +147,10 @@ type SpawnShell struct{}
 
 func (SpawnShell) ID() string { return "spawn_shell" }
 func (o SpawnShell) Verify(out Outcome) Verification {
-	if out.solvedVia(shellStrategies) {
+	// A spawned shell is a goal, not a memory primitive, so it reads the shell
+	// flag the solve recorded (set once, from the same classification that
+	// established the primitives) rather than re-inspecting strategy names.
+	if out.ShellDemonstrated {
 		return Verification{Objective: o.ID(), Status: StatusObjectiveMet,
 			Detail: "solved via a shell-spawning technique (" + out.WinningStrategy + ")"}
 	}
