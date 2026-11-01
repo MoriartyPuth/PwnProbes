@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (18 of 20), all merged into `main`
+## Done (19 of 20), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -31,6 +31,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 16 | `feat/resolve-plans` | Finish plan/execute for `ret2plt`: static recognition (pop-rdi gadget, exec PLT stub, in-binary command string) factored into a shared `Ret2pltResolution`/`resolveRet2pltFrom` that both `ret2pltStrategy` (execute) and `planRet2plt` (inspect) consume, so the plan carries the concrete gadget/string/stub addresses execution uses — verified to match on a real lab. Behaviour-preserving; the per-strategy import heuristic is replaced by real resolution. Other strategies follow incrementally. |
 | 17 | `feat/scoring-planner` | Primitive composition: `composeChains` builds goal-directed, cross-strategy capability chains toward a shell/flag from the static resolution, established primitives, and shared `Knowledge` — e.g. a format-string/disclosed `LEAK` feeding `ret2libc`, a dependency single-strategy plans cannot express, reusing a known leak rather than rediscovering it. Each link is marked available or not; a chain is a hypothesis (reasoning only — execution and the honest oracle are unchanged). Deterministic. Additive `report.chains`, shown by `analyze`/`plan`/`solve`. |
 | 18 | `feat/primitive-objectives` | Objectives grade from established primitives, not strategy names. A verified solve now establishes the primitive it demonstrated (control/write/call) from the winning strategy via a single `demonstratedBy` classification, referencing the flag finding at `exploitability_established`. `DemonstrateControl`/`DemonstrateWrite` read those primitives; `SpawnShell` reads a shell flag set from the same one place. The three per-objective strategy maps are removed. Objective statuses are unchanged on existing labs (verified on lab08); they now trace to primitives. |
+| 19 | `feat/isolated-backend` | A supported isolated one-shot backend: `execution.Isolated` enforces memory/CPU/process limits via a POSIX `ulimit` wrapper that `exec`s the target in place (keeping the process group + bounds), declares those controls in `Enforces()`, and rejects network/filesystem isolation and the container level explicitly (no silent degradation). `SelectBackend` maps `none→Native`, `sandbox→Isolated`. Wired into `run --isolation sandbox [--max-memory/--max-cpu/--max-procs]`; a Linux test proves a CPU limit kills a busy loop. `solve` keeps its explicit rejection (its sessions are not isolated yet). Default execution unchanged. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -46,10 +47,9 @@ summarized here. It is planned, not yet started.
 
 | PR | Branch (planned) | Summary |
 |----|------------------|---------|
-| 19 | `feat/isolated-backend` | An `Isolated` execution backend (rlimit trampoline + optional namespace isolation) that enforces `--isolation sandbox` where supported. |
 | 20 | `feat/libc-fingerprint-benchmark` | Robust libc fingerprinting for `ret2libc` across glibc versions, plus a held-out generalization benchmark reported separately. |
 
-PRs 16–18 landed. Next: PR 19 (isolated backend), then PR 20 (libc fingerprint + held-out benchmark).
+PRs 16–19 landed. Next: PR 20 (libc fingerprint + held-out benchmark).
 Breadth work (full heap, general ROP expansion, more architectures, richer UI)
 stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 

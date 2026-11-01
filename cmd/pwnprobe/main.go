@@ -60,6 +60,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	timeout := f.Duration("timeout", time.Second, "per-run deadline (maximum 1 minute)")
 	var input, manifest, original, baseline, pattern, remote, libc, save, verify, isolation *string
 	var planOnly, redact, approve *bool
+	var maxMem, maxCPU, maxProcs *int
 	switch args[0] {
 	case "inspect", "detect", "strategies":
 	case "analyze", "plan":
@@ -79,6 +80,10 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 	case "run":
 		input = f.String("input", "", "read stdin bytes from a file; otherwise send EOF")
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
+		isolation = f.String("isolation", "none", "execution isolation: none (native) | sandbox (enforce resource limits via ulimit)")
+		maxMem = f.Int("max-memory", 0, "with --isolation sandbox: address-space limit in bytes (0 = unlimited)")
+		maxCPU = f.Int("max-cpu", 0, "with --isolation sandbox: CPU-seconds limit (0 = unlimited)")
+		maxProcs = f.Int("max-procs", 0, "with --isolation sandbox: process-count limit (0 = unlimited)")
 	case "solve":
 		pattern = f.String("flag-pattern", "", "regexp for recovered flags; empty uses the default CTF shape")
 		remote = f.String("remote", "", "exploit a remote host:port over TCP; the path argument is a local copy for analysis")
@@ -316,7 +321,18 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 				return err
 			}
 		}
-		report, err := runner.Run(ctx, runner.Request{Program: path, Input: data, Timeout: *timeout})
+		// Route through the selected execution backend: native by default, or the
+		// isolated backend (resource limits via ulimit) under --isolation sandbox.
+		pol := execution.DefaultPolicy(*timeout)
+		pol.Isolation = execution.IsolationLevel(*isolation)
+		pol.MaxMemoryBytes = uint64(*maxMem)
+		pol.MaxCPUSeconds = *maxCPU
+		pol.MaxProcesses = *maxProcs
+		be, berr := execution.SelectBackend(pol)
+		if berr != nil {
+			return berr
+		}
+		report, err := be.Run(ctx, execution.Request{Program: path, Input: data, Timeout: *timeout})
 		if err != nil {
 			return err
 		}
