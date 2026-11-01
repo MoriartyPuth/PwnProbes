@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (16 of 20), all merged into `main`
+## Done (17 of 20), all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -29,6 +29,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 14 | `feat/interactive-frontend` | `internal/repl`: an interactive shell over the same engine services (no strategy logic in handlers). Commands: `info`, `analyze`, `plans`, `plan <id>`, `strategies`, `solve`, `findings`, `primitives`, `objectives`, `knowledge [libc PATH]`, `save`, `open`/`resume`, `help`, `quit`. Injecting knowledge invalidates the current plans (re-analyze on next use). Reuses `PlanOnly`/`Solve`/`Workspace`; supports partial progress (objective evidence shown without a flag). Driven by an `Engine` interface, so it is unit-tested with a fake (no ELF, no execution). CLI: `pwnprobe interactive <target>`. |
 | 15 | `feat/release-hardening` | Release hardening + 1.0 gate: [`docs/RELEASE.md`](RELEASE.md) publishes the compatibility policy, the objective-verification contract, the security-boundary summary, and the extension guide, and points to the measured benchmark results in `PwnProbe-benchmarks/results/`. Version bumped to `1.0.0`. No engine behaviour change. |
 | 16 | `feat/resolve-plans` | Finish plan/execute for `ret2plt`: static recognition (pop-rdi gadget, exec PLT stub, in-binary command string) factored into a shared `Ret2pltResolution`/`resolveRet2pltFrom` that both `ret2pltStrategy` (execute) and `planRet2plt` (inspect) consume, so the plan carries the concrete gadget/string/stub addresses execution uses — verified to match on a real lab. Behaviour-preserving; the per-strategy import heuristic is replaced by real resolution. Other strategies follow incrementally. |
+| 17 | `feat/scoring-planner` | Primitive composition: `composeChains` builds goal-directed, cross-strategy capability chains toward a shell/flag from the static resolution, established primitives, and shared `Knowledge` — e.g. a format-string/disclosed `LEAK` feeding `ret2libc`, a dependency single-strategy plans cannot express, reusing a known leak rather than rediscovering it. Each link is marked available or not; a chain is a hypothesis (reasoning only — execution and the honest oracle are unchanged). Deterministic. Additive `report.chains`, shown by `analyze`/`plan`/`solve`. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -44,12 +45,11 @@ summarized here. It is planned, not yet started.
 
 | PR | Branch (planned) | Summary |
 |----|------------------|---------|
-| 17 | `feat/scoring-planner` | Scoring planner that composes established primitives toward an objective (reusing shared `Knowledge`); a composed chain is a hypothesis until the oracle verifies it. |
 | 18 | `feat/primitive-objectives` | Objectives grade from the established primitives (PRs 16–17), removing the strategy-name classification heuristic. |
 | 19 | `feat/isolated-backend` | An `Isolated` execution backend (rlimit trampoline + optional namespace isolation) that enforces `--isolation sandbox` where supported. |
 | 20 | `feat/libc-fingerprint-benchmark` | Robust libc fingerprinting for `ret2libc` across glibc versions, plus a held-out generalization benchmark reported separately. |
 
-PR 16 landed (ret2plt split); next keystone is PR 17 (18 falls out of it); then 19–20 harden.
+PRs 16–17 landed (ret2plt split; primitive composition). Next: PR 18 (objectives grade from primitives), then 19–20 harden.
 Breadth work (full heap, general ROP expansion, more architectures, richer UI)
 stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 

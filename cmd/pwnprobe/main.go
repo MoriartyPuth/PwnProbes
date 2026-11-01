@@ -187,6 +187,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 		fmt.Fprintf(out, "%d candidate plan(s) for %s mode (target not executed):\n", len(report.Plans), report.Environment.Mode)
 		printPlans(out, report.Plans)
+		printChains(out, report.Chains)
 		for _, l := range report.Limitations {
 			fmt.Fprintln(out, "Limitation:", l)
 		}
@@ -201,6 +202,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 		fmt.Fprintf(out, "%d candidate plan(s) for %s mode (target not executed):\n", len(report.Plans), report.Environment.Mode)
 		printPlans(out, report.Plans)
+		printChains(out, report.Chains)
 		return nil
 	case "assisted":
 		prev, err := solve.PlanOnly(ctx, path, *remote, *libc)
@@ -215,6 +217,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			fmt.Fprintln(out, "objective: recover_flag (standard set also graded: leak/control/write/shell)")
 			fmt.Fprintf(out, "execution policy: native %s execution\n", prev.Environment.Mode)
 			printPlans(out, prev.Plans)
+			printChains(out, prev.Chains)
 			for _, l := range prev.Limitations {
 				fmt.Fprintln(out, "Limitation:", l)
 			}
@@ -368,6 +371,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			fmt.Fprintf(out, "plan-only: %d candidate plan(s) for %s mode (target not executed)\n", len(report.Plans), report.Environment.Mode)
 			printPlans(out, report.Plans)
+			printChains(out, report.Chains)
 			for _, limitation := range report.Limitations {
 				fmt.Fprintln(out, "Limitation:", limitation)
 			}
@@ -412,6 +416,7 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 				fmt.Fprintf(out, "plan (* = deferred as expensive): %s\n", strings.Join(planned, " -> "))
 			}
 			printPlans(out, report.Plans)
+			printChains(out, report.Chains)
 			env := report.Environment
 			commit := env.Commit
 			if commit == "" {
@@ -475,6 +480,26 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// printChains renders the composed goal-directed chains: one header per chain
+// (goal, feasibility, cost) with its reason, then each capability step and
+// whether that link is available.
+func printChains(out io.Writer, chains []solve.ComposedChain) {
+	for _, c := range chains {
+		feas := "feasible"
+		if !c.Feasible {
+			feas = "needs more"
+		}
+		fmt.Fprintf(out, "chain -> %-11s %-10s cost=%-9s %s\n", c.Goal, feas, c.Cost, c.Reason)
+		for _, st := range c.Steps {
+			mark := "ok "
+			if !st.Satisfied {
+				mark = "?? "
+			}
+			fmt.Fprintf(out, "    [%s] %-14s %s\n", mark, st.Strategy, st.Via)
+		}
+	}
 }
 
 // printPlans renders the inspectable candidate plans: one header line per plan
