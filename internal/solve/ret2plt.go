@@ -33,35 +33,17 @@ func (s *solver) ret2pltStrategy(ctx context.Context) (bool, error) {
 	if bin.Bits != 64 || bin.Protections["pie"].Status == "enabled" {
 		return false, nil
 	}
-	f, err := elf.Open(s.path)
-	if err != nil {
-		return false, err
-	}
-	popRdi, okRdi := findGadget(f, []byte{0x5f, 0xc3}) // pop rdi; ret
-	retGadget, okRet := findGadget(f, []byte{0xc3})    // ret (alignment)
-	stubs := pltStubs(f)                               // GOT slot -> PLT stub address
-	got := pltGotEntries(f)                            // symbol name -> GOT slot
-	strs := commandStrings(f)
-	if a, ok := findBinSh(f); ok {
-		strs = append(strs, strEntry{addr: a, text: "/bin/sh"})
-	}
-	f.Close()
+	// Recognition is shared with planRet2plt via resolveRet2pltFrom, so the plan
+	// and this execution use the same gadgets, stubs, and strings.
+	res := resolveRet2pltFrom(bin, s.path)
+	popRdi, okRet, retGadget := res.PopRDI, res.HasRet, res.Ret
+	calls, strs := res.Calls, res.Strings
 
-	if !okRdi || len(strs) == 0 {
-		if !okRdi {
+	if !res.HasPopRDI || len(strs) == 0 {
+		if !res.HasPopRDI {
 			s.report.Limitations = append(s.report.Limitations, "no `pop rdi; ret` gadget; ret2plt strategy skipped")
 		}
 		return false, nil
-	}
-
-	// Resolve callable PLT stubs for the one-argument exec-family functions.
-	var calls []pltCall
-	for _, name := range []string{"system", "execl", "execlp", "execvp"} {
-		if slot, ok := got[name]; ok {
-			if stub, ok2 := stubs[slot]; ok2 {
-				calls = append(calls, pltCall{name: name, addr: stub})
-			}
-		}
 	}
 	if len(calls) == 0 {
 		s.report.Limitations = append(s.report.Limitations, "no system/exec PLT stub resolved; ret2plt strategy skipped")
