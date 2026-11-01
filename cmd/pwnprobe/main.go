@@ -433,6 +433,9 @@ func execute(ctx context.Context, args []string, out, errOut io.Writer) error {
 			}
 			printPlans(out, report.Plans)
 			printChains(out, report.Chains)
+			for _, sel := range report.Selection {
+				fmt.Fprintf(out, "selection: %s promoted first — %s\n", sel.Strategy, sel.Reason)
+			}
 			env := report.Environment
 			commit := env.Commit
 			if commit == "" {

@@ -71,6 +71,9 @@ type Report struct {
 	// cross-strategy hypotheses (e.g. a leak feeding ret2libc) toward a shell/flag,
 	// each with its links' availability. Reported, not executed.
 	Chains []ComposedChain `json:"chains,omitempty"`
+	// Selection records strategies whose run order the composer changed, and why
+	// (roadmap §30 follow-on): composition driving execution, explainably.
+	Selection []SelectionNote `json:"selection,omitempty"`
 	// Context is the shared TargetContext for the run: target identity,
 	// capabilities, first-class findings (observations vs. interpretations), and
 	// accumulated Knowledge. Additive; the legacy fields above are unchanged.
@@ -232,6 +235,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 		// it runs last and only when the targeted strategies did not apply.
 		run, rejected := reg.eligible(ModeRemote)
 		report.Rejected = rejected
+		run = s.applyComposition(run, composeChains(tc, resolveRet2plt(tc)))
 		report.Plans = s.collectPlans(ModeRemote, reg)
 		return s.runStrategies(ctx, run)
 	}
@@ -263,6 +267,7 @@ func Solve(ctx context.Context, path, pattern, remote, libc string, timeout time
 	}
 	run, rejected := reg.eligible(ModeLocal)
 	report.Rejected = rejected
+	run = s.applyComposition(run, composeChains(tc, resolveRet2plt(tc)))
 	report.Plans = s.collectPlans(ModeLocal, reg)
 	return s.runStrategies(ctx, run)
 }

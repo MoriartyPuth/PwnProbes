@@ -1504,3 +1504,22 @@ after the planner exists, not before. Breadth items (full heap: tcache poisoning
 on glibc 2.27–2.31; general ROP expansion: `write4`/`ret2csu`/stack pivot, §14;
 additional architectures; a richer terminal UI) remain optional follow-on work
 outside this sequence.
+
+## 30.1 Wiring the composer into execution (PR 21+)
+
+PR 17 made composition *advisory* — chains were reported but the engine ran the
+fixed registry order. PR 21 begins making composition *drive* execution:
+`applyComposition` promotes the terminal strategy of a feasible, cheap composed
+chain (a strong static signal) ahead of the other non-expensive strategies, with
+the reason recorded in `report.selection`. PR 6's expensive-deferred ranking and
+the honest oracle are untouched, and weaker (moderate, leak-dependent) chains
+stay advisory until they can be acted on safely.
+
+The measurable effect: a ret2plt-shaped target now solves via ret2plt first
+instead of after the strategies that cannot apply (lab14 ~4s vs ~70s), with no
+coverage change. The step beyond is **chain-as-unit execution** — running a
+multi-strategy chain (a leak strategy establishing a libc base that ret2libc then
+consumes, in one flow) as a single composed objective. That is the point at which
+composition changes *what* can be solved, not only the order; it needs strategies
+to consume established primitives/knowledge from earlier steps rather than
+re-deriving them, and is the natural next PR.

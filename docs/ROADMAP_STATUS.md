@@ -9,7 +9,7 @@ records what has landed against it and what is next.
 
 Baseline before this work: `main` @ `78da9f5`.
 
-## Done (20 of 20) — roadmap + follow-on complete, all merged into `main`
+## Done (21) — roadmap + follow-on complete, all merged into `main`
 
 | PR | Branch | Summary |
 |----|--------|---------|
@@ -33,6 +33,7 @@ Baseline before this work: `main` @ `78da9f5`.
 | 18 | `feat/primitive-objectives` | Objectives grade from established primitives, not strategy names. A verified solve now establishes the primitive it demonstrated (control/write/call) from the winning strategy via a single `demonstratedBy` classification, referencing the flag finding at `exploitability_established`. `DemonstrateControl`/`DemonstrateWrite` read those primitives; `SpawnShell` reads a shell flag set from the same one place. The three per-objective strategy maps are removed. Objective statuses are unchanged on existing labs (verified on lab08); they now trace to primitives. |
 | 19 | `feat/isolated-backend` | A supported isolated one-shot backend: `execution.Isolated` enforces memory/CPU/process limits via a POSIX `ulimit` wrapper that `exec`s the target in place (keeping the process group + bounds), declares those controls in `Enforces()`, and rejects network/filesystem isolation and the container level explicitly (no silent degradation). `SelectBackend` maps `none→Native`, `sandbox→Isolated`. Wired into `run --isolation sandbox [--max-memory/--max-cpu/--max-procs]`; a Linux test proves a CPU limit kills a busy loop. `solve` keeps its explicit rejection (its sessions are not isolated yet). Default execution unchanged. |
 | 20 | `feat/libc-fingerprint` | Robust libc handling for `ret2libc`: `resolveBaseFromLeaks` fingerprints the base by matching each leak's fixed page offset against all exported libc symbols (via `libcSymbolOffsets`), picking the base the most distinct leaks agree on — so a puts/printf/… leak resolves, not only `system`. When no leak matches the local libc, it reports that the target libc likely differs and to pass `--libc`. Strictly more cases handled, no regression (lab07 is the only ret2libc lab and did not previously solve here). The held-out generalization benchmark (real ROP-Emporium binaries, reported separately) is recorded in `PwnProbe-benchmarks`. |
+| 21 | `feat/compose-selection` | Wire the composer into execution: `applyComposition` promotes the terminal strategy of a *feasible, cheap* composed chain (a strong static signal — e.g. ret2plt when the binary has pop-rdi + a system/exec PLT stub + a command string) to the front of the non-expensive group, with recorded rationale (`report.selection`). PR 6's expensive-deferred ranking and the honest oracle are preserved; weaker (moderate) chains stay advisory. Measured: lab14 solves in ~4s vs ~70s (ret2plt tried first instead of after three failing strategies); no coverage regression. First increment of composition driving execution. |
 
 Each PR is behavior-preserving except PR 6, which intentionally changes strategy
 ordering (correctness preserved; the flag oracle and per-strategy gating are
@@ -49,7 +50,12 @@ summarized here. It is planned, not yet started.
 | PR | Branch (planned) | Summary |
 |----|------------------|---------|
 
-All of PRs 16–20 have landed; the follow-on composition/hardening sequence is complete.
+All of PRs 16–20 have landed, plus PR 21 which begins wiring the composer into
+execution (it now promotes a feasible cheap chain's strategy, with rationale).
+The remaining step is chain-as-unit execution: running a multi-strategy chain
+(e.g. a leak strategy feeding ret2libc) as one composed unit so composition can
+solve a class no single recipe can — the point at which composition changes
+coverage, not just order.
 Breadth work (full heap, general ROP expansion, more architectures, richer UI)
 stays optional and outside this sequence. See `docs/ARCHITECTURE.md`.
 
