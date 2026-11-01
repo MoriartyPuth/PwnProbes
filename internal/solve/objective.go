@@ -17,12 +17,13 @@ package solve
 // established primitives, the findings, and the strongest status any finding
 // reached. It is a projection of the finished report, not new state.
 type Outcome struct {
-	Flags           []string
-	Solved          bool
-	WinningStrategy string
-	Primitives      []Primitive
-	Findings        []Finding
-	HighestStatus   VerificationStatus
+	Flags             []string
+	Solved            bool
+	WinningStrategy   string
+	ShellDemonstrated bool
+	Primitives        []Primitive
+	Findings          []Finding
+	HighestStatus     VerificationStatus
 }
 
 // Verification is an objective's graded result: how far the run got toward that
@@ -94,18 +95,21 @@ func outcomeFrom(report *Report, tc *TargetContext) Outcome {
 	}
 	var flags []string
 	var winning string
+	var shell bool
 	if report.Solved {
 		flags = report.Flags
 		if report.Winning != nil {
 			winning = report.Winning.Strategy
+			_, shell = demonstratedBy(winning)
 		}
 	}
 	return Outcome{
-		Flags:           flags,
-		Solved:          report.Solved,
-		WinningStrategy: winning,
-		Primitives:      prims,
-		Findings:        finds,
-		HighestStatus:   highest,
+		Flags:             flags,
+		Solved:            report.Solved,
+		WinningStrategy:   winning,
+		ShellDemonstrated: shell,
+		Primitives:        prims,
+		Findings:          finds,
+		HighestStatus:     highest,
 	}
 }

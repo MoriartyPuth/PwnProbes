@@ -19,43 +19,60 @@ func TestEstablishLeakObjective(t *testing.T) {
 	}
 }
 
-// DemonstrateControl is met by a solve via a control-flow technique; a crash
-// with no solve is only Observed; a non-control solve (a leak) is Inconclusive.
+// DemonstrateControl is met by an established control primitive; a crash with no
+// primitive is only Observed; neither is Inconclusive.
 func TestDemonstrateControlObjective(t *testing.T) {
 	o := DemonstrateControl{}
-	solveControl := Outcome{Solved: true, WinningStrategy: "ret2plt"}
-	if got := o.Verify(solveControl).Status; got != StatusObjectiveMet {
-		t.Errorf("control solve: status=%s, want objective_met", got)
+	withControl := Outcome{Primitives: []Primitive{{Kind: PrimitiveControl}}}
+	if got := o.Verify(withControl).Status; got != StatusObjectiveMet {
+		t.Errorf("control primitive: status=%s, want objective_met", got)
 	}
 	crashOnly := Outcome{Findings: []Finding{{Kind: FindingCrash, Status: StatusObserved}}}
 	if got := o.Verify(crashOnly).Status; got != StatusObserved {
 		t.Errorf("crash only: status=%s, want observed (not promoted)", got)
 	}
-	leakSolve := Outcome{Solved: true, WinningStrategy: "stack_dump"}
-	if got := o.Verify(leakSolve).Status; got != StatusInconclusive {
-		t.Errorf("leak solve: status=%s, want inconclusive (not control)", got)
+	if got := o.Verify(Outcome{Primitives: []Primitive{{Kind: PrimitiveLeak}}}).Status; got != StatusInconclusive {
+		t.Errorf("leak only: status=%s, want inconclusive (not control)", got)
 	}
 }
 
-// DemonstrateWrite is met only by a write-class solve.
+// DemonstrateWrite is met only by an established write primitive.
 func TestDemonstrateWriteObjective(t *testing.T) {
 	o := DemonstrateWrite{}
-	if got := o.Verify(Outcome{Solved: true, WinningStrategy: "fmt_got_overwrite"}).Status; got != StatusObjectiveMet {
-		t.Errorf("fmt_got solve: status=%s, want objective_met", got)
+	if got := o.Verify(Outcome{Primitives: []Primitive{{Kind: PrimitiveWrite}}}).Status; got != StatusObjectiveMet {
+		t.Errorf("write primitive: status=%s, want objective_met", got)
 	}
-	if got := o.Verify(Outcome{Solved: true, WinningStrategy: "ret2plt"}).Status; got != StatusInconclusive {
-		t.Errorf("ret2plt solve: status=%s, want inconclusive (ret2plt is not a write)", got)
+	if got := o.Verify(Outcome{Primitives: []Primitive{{Kind: PrimitiveCall}}}).Status; got != StatusInconclusive {
+		t.Errorf("call-only: status=%s, want inconclusive (call is not a write)", got)
 	}
 }
 
-// SpawnShell is met only by a shell-spawning solve.
+// SpawnShell is met only when the solve demonstrated a shell.
 func TestSpawnShellObjective(t *testing.T) {
 	o := SpawnShell{}
-	if got := o.Verify(Outcome{Solved: true, WinningStrategy: "shellcode"}).Status; got != StatusObjectiveMet {
-		t.Errorf("shellcode solve: status=%s, want objective_met", got)
+	if got := o.Verify(Outcome{Solved: true, ShellDemonstrated: true, WinningStrategy: "shellcode"}).Status; got != StatusObjectiveMet {
+		t.Errorf("shell demonstrated: status=%s, want objective_met", got)
 	}
-	if got := o.Verify(Outcome{Solved: true, WinningStrategy: "ret2plt"}).Status; got != StatusInconclusive {
-		t.Errorf("ret2plt solve: status=%s, want inconclusive (no shell)", got)
+	if got := o.Verify(Outcome{Solved: true, ShellDemonstrated: false, WinningStrategy: "ret2plt"}).Status; got != StatusInconclusive {
+		t.Errorf("no shell: status=%s, want inconclusive", got)
+	}
+}
+
+// demonstratedBy centralizes which capabilities a verified solve proves.
+func TestDemonstratedBy(t *testing.T) {
+	kinds, shell := demonstratedBy("rop_execve")
+	has := map[PrimitiveKind]bool{}
+	for _, k := range kinds {
+		has[k] = true
+	}
+	if !has[PrimitiveControl] || !has[PrimitiveCall] || !shell {
+		t.Errorf("rop_execve should demonstrate control+call+shell, got %v shell=%v", kinds, shell)
+	}
+	if _, shell := demonstratedBy("ret2plt"); shell {
+		t.Error("ret2plt should not be classified as spawning a shell")
+	}
+	if kinds, _ := demonstratedBy("angr_logic"); len(kinds) != 0 {
+		t.Errorf("angr_logic (logic solve) should demonstrate no memory primitive, got %v", kinds)
 	}
 }
 
@@ -73,7 +90,12 @@ func TestNoObjectiveMetWithoutSolve(t *testing.T) {
 
 // EvaluateObjectives returns RecoverFlag first (authoritative) and the full set.
 func TestEvaluateObjectivesOrderAndSet(t *testing.T) {
-	vs := EvaluateObjectives(Outcome{Flags: []string{"FLAG{x}"}, Solved: true, WinningStrategy: "rop_execve"})
+	// Simulate a verified rop_execve solve: control+call primitives established,
+	// shell demonstrated, no write.
+	vs := EvaluateObjectives(Outcome{
+		Flags: []string{"FLAG{x}"}, Solved: true, WinningStrategy: "rop_execve", ShellDemonstrated: true,
+		Primitives: []Primitive{{Kind: PrimitiveControl}, {Kind: PrimitiveCall}},
+	})
 	if len(vs) != 5 {
 		t.Fatalf("want 5 objectives, got %d", len(vs))
 	}
