@@ -34,12 +34,12 @@ func TestRegistryDeterministicRanking(t *testing.T) {
 		"fmt_got_overwrite", "fmt_write_ret", "heap_uaf", "stack_overwrite",
 		"rop_ret2win_args", "rop_execve", "ret2plt", "shellcode", "ret2libc",
 		"canary_ret2win", "rop_planner", // moderate rop_planner now precedes angr
-		"angr_logic", "partial_overwrite", // expensive, deferred to the end
+		"angr_logic", "partial_overwrite", "chain_leak_ret2libc", // expensive, deferred to the end
 	}
 	wantRemote := []string{
 		"shellcode", "ret2libc", "rop_execve", "ret2plt", "canary_ret2win",
 		"heap_uaf", "rop_planner",
-		"stack_overwrite_session", "partial_overwrite", // expensive, deferred
+		"stack_overwrite_session", "partial_overwrite", "chain_leak_ret2libc", // expensive, deferred
 	}
 
 	gotLocal, _ := reg.eligible(ModeLocal)
